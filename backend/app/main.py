@@ -24,6 +24,7 @@ def create_app(data_dir: str | None = None) -> FastAPI:
     )
     root = Path(configured_data_dir)
     app.state.service = MockOcrService(Store(root))
+    app.state.service.ensure_demo_job()
     app.include_router(router)
 
     @app.get("/health")

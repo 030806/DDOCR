@@ -56,6 +56,25 @@ def get_first_result(
     return response.json()["data"]["items"][0]
 
 
+def test_empty_backend_seeds_api_demo_results(
+    tmp_path: Path,
+) -> None:
+    test_client = client(tmp_path)
+    jobs_response = test_client.get("/api/v1/ocr/jobs")
+    jobs = jobs_response.json()["data"]["items"]
+    assert len(jobs) == 1
+    assert jobs[0]["name"] == "端子排 OCR 联调示例"
+
+    results_response = test_client.get(
+        f"/api/v1/ocr/jobs/{jobs[0]['id']}/pages/1/results"
+    )
+    assert [item["text"] for item in results_response.json()["data"]["items"]] == [
+        "XT-101",
+        "QF10I",
+        "24V DC",
+    ]
+
+
 def test_upload_job_and_results(tmp_path: Path) -> None:
     test_client = client(tmp_path)
     job_id = workflow(test_client)

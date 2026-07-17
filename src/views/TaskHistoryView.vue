@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed, h, ref } from 'vue'
+import { computed, h, onMounted, ref } from 'vue'
 import { DeleteOutlined, ExportOutlined, EyeOutlined, FileTextOutlined, SearchOutlined } from '@ant-design/icons-vue'
 import { Modal, message } from 'ant-design-vue'
 import { useRouter } from 'vue-router'
-import { mockTasks } from '../mock/tasks'
 import { pages } from '../mock'
+import { getTasks } from '../api/ocr'
 import { filterAndSortTasks } from '../taskFilters'
 import type { OcrTask, TaskStatus, TaskTimeOrder } from '../types/task'
 import { exportOcrResults } from '../exportResults'
@@ -12,11 +12,19 @@ import { useAppSettings } from '../composables/useAppSettings'
 
 const router = useRouter()
 const { settings } = useAppSettings()
-const tasks = ref<OcrTask[]>([...mockTasks])
+const tasks = ref<OcrTask[]>([])
 const search = ref('')
 const status = ref<TaskStatus | 'all'>('all')
 const timeOrder = ref<TaskTimeOrder>('newest')
 const visibleTasks = computed(() => filterAndSortTasks(tasks.value, search.value, status.value, timeOrder.value))
+
+onMounted(async () => {
+  try {
+    tasks.value = await getTasks()
+  } catch {
+    message.error('任务查询失败，请确认 FastAPI 服务已启动')
+  }
+})
 
 const columns = [
   { title: '任务 / 文件', key: 'task', width: 270 },

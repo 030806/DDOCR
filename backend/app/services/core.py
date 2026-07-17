@@ -20,6 +20,38 @@ class MockOcrService:
     def __init__(self, store: Store) -> None:
         self.store = store
 
+    def ensure_demo_job(self) -> None:
+        """Seed one API-backed task when the mock backend starts empty."""
+        if self.store.all("job"):
+            return
+
+        file_id = "demo-terminal-file"
+        if not self.store.get("file", file_id):
+            self.store.put(
+                "file",
+                file_id,
+                {
+                    "id": file_id,
+                    "file_name": "terminal_demo.png",
+                    "size_bytes": 0,
+                    "media_type": "image/png",
+                    "status": "ready",
+                    "page_count": 1,
+                    "failure_reason": None,
+                    "created_at": now(),
+                    "deleted": False,
+                },
+            )
+
+        self.create_job(
+            JobCreate(
+                name="端子排 OCR 联调示例",
+                file_id=file_id,
+                model_id="mock",
+                model_version="1.0.0",
+            )
+        )
+
     def create_upload(
         self,
         body: UploadSessionCreate,

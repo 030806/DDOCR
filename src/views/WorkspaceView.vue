@@ -4,8 +4,8 @@ import { message } from 'ant-design-vue'
 import { Pane, Splitpanes } from 'splitpanes'
 import 'splitpanes/dist/splitpanes.css'
 import { useRoute, useRouter } from 'vue-router'
-import { models, pages, type OcrItem } from '../mock'
-import { findMockTask } from '../mock/tasks'
+import { models, pages as mockPages, type MockPage, type OcrItem } from '../mock'
+import { getOcrPages, getTask } from '../api/ocr'
 import { createSplitLayout } from '../splitLayout'
 import { exportOcrResults, type ExportMode } from '../exportResults'
 import type { ResultViewMode } from '../ocrLayout'
@@ -32,10 +32,11 @@ const commentOpen = ref(false)
 const resultViewMode = ref<ResultViewMode>(settings.value.defaultResultViewMode)
 const workspaceWidth = ref(typeof window === 'undefined' ? 1440 : window.innerWidth)
 const workspace = ref<{ $el: HTMLElement }>()
+const pages = ref<MockPage[]>(mockPages)
 let workspaceObserver: ResizeObserver | undefined
 
-const page = computed(() => pages[currentPage.value - 1])
-const selectedItem = computed(() => pages.flatMap((mockPage) => mockPage.items).find((item) => item.id === selectedId.value))
+const page = computed(() => pages.value[currentPage.value - 1])
+const selectedItem = computed(() => pages.value.flatMap((ocrPage) => ocrPage.items).find((item) => item.id === selectedId.value))
 const currentModel = computed(() => models.find((model) => model.value === selectedModel.value)!)
 const splitLayout = computed(() => createSplitLayout(workspaceWidth.value))
 
@@ -50,21 +51,21 @@ onMounted(() => {
 
 onBeforeUnmount(() => workspaceObserver?.disconnect())
 
-watch(() => route.params.taskId, (taskId) => {
+watch(() => route.params.taskId, async (taskId) => {
   if (typeof taskId !== 'string') return
-  const task = findMockTask(taskId)
-  if (!task) {
-    message.warning('未找到对应的 Mock 任务，已返回默认工作台')
+  try {
+    const [task, taskPages] = await Promise.all([getTask(taskId), getOcrPages(taskId)])
+    pages.value = taskPages
+    if (models.some((model) => model.value === task.modelId)) selectedModel.value = task.modelId
+    currentPage.value = 1
+    const candidates = taskPages[0]?.items || []
+    const reviewItem = route.query.action === 'review' ? candidates.find((item) => item.score < 0.95) : undefined
+    selectedId.value = (reviewItem || candidates[0])?.id || ''
+    message.success(route.query.action === 'review' ? `已继续复核：${task.name}` : `已加载任务：${task.name}`)
+  } catch {
+    message.warning('未找到对应的 FastAPI 任务，已返回默认工作台')
     router.replace('/workspace')
-    return
   }
-  selectedModel.value = task.modelId
-  const targetPage = task.mockPageNumbers[0] || 1
-  currentPage.value = Math.min(pages.length, Math.max(1, targetPage))
-  const candidates = pages[currentPage.value - 1].items
-  const reviewItem = route.query.action === 'review' ? candidates.find((item) => item.score < 0.95) : undefined
-  selectedId.value = (reviewItem || candidates[0])?.id || ''
-  message.success(route.query.action === 'review' ? `已继续复核：${task.name}` : `已加载任务：${task.name}`)
 }, { immediate: true })
 
 function selectItem(id: string) {
@@ -74,7 +75,7 @@ function selectItem(id: string) {
 
 function switchPage(no: number) {
   currentPage.value = no
-  selectedId.value = pages[no - 1].items[0]?.id || ''
+  selectedId.value = pages.value[no - 1].items[0]?.id || ''
 }
 
 function runMockOcr() {
