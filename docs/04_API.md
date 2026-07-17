@@ -1,0 +1,208 @@
+# 公共 API 契约
+
+本文件是公共 API 的唯一详细定义。通用硬规则见 [RULES.md](RULES.md)。
+
+## 1. 状态与错误
+
+任务执行状态：`queued | running | succeeded | partial_success | failed | cancelled`。
+
+任务阶段：`queued | validating | rendering | preprocessing | detecting | recognizing | persisting | finalizing`。
+
+审核状态：`not_required | needs_review | in_review | reviewed`。执行失败和需要复核不得混用。
+
+文件状态：`uploading | validating | ready | rejected | deleted`。页面状态：`pending | running | succeeded | failed | skipped`。导出状态：`queued | running | succeeded | failed | expired`。
+
+HTTP 错误：400 参数错误、401 未登录、403 无权限、404 不存在、409 幂等/修订冲突、413 文件过大、422 文件或参数不可处理、429 限流/配额、500/502/503 服务或推理异常。
+
+```json
+{
+  "error": {
+    "code": "CORRECTION_REVISION_CONFLICT",
+    "message": "识别结果已被其他用户修改",
+    "details": {"current_revision": 4, "current_display_text": "QF101"}
+  },
+  "request_id": "req_019..."
+}
+```
+
+## 2. 用户与偏好
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/v1/users/me` | 当前用户、角色和权限 |
+| GET | `/api/v1/users/me/preferences` | 获取跨设备偏好，可选 |
+| PATCH | `/api/v1/users/me/preferences` | 部分更新跨设备偏好，可选 |
+| POST | `/api/v1/auth/change-password` | 本地身份修改密码；OIDC 模式由身份系统提供 |
+| POST | `/api/v1/auth/logout` | 注销会话/刷新令牌 |
+
+用户至少返回：`id, name, employee_no, role_names, permissions, department, email, phone_masked, avatar_url, last_login_at`，可包含 `tenant_id`。
+
+偏好字段：`preferences_version, default_model_id, low_confidence_threshold, default_result_view_mode, show_confidence, default_export_mode, default_zoom`。服务端允许旧客户端缺少新增字段。
+
+## 3. 模型目录
+
+`GET /api/v1/models?status=available`
+
+每项包含：`id, name, default_version, languages, capabilities, note, estimated_ms_per_page, status, input_limits, default_options`。速度是注明含义的预估指标，不是固定展示字符串。前端创建任务必须提交逻辑 ID 和明确版本。
+
+```json
+{
+  "data": {"items": [{
+    "id": "steel", "name": "钢材铭牌专用", "default_version": "2.0.3",
+    "languages": ["zh-CN", "en"],
+    "capabilities": ["text_detection", "text_recognition"],
+    "note": "低对比度 / 喷码", "estimated_ms_per_page": 52,
+    "status": "available",
+    "input_limits": {"max_width_px": 10000, "max_height_px": 10000}
+  }]},
+  "request_id": "req_019..."
+}
+```
+
+## 4. 文件上传
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/v1/files/upload-sessions` | 创建对象存储直传会话 |
+| POST | `/api/v1/files/{file_id}/complete` | 确认上传并触发校验 |
+| GET | `/api/v1/files/{file_id}` | 查询状态和元数据 |
+| DELETE | `/api/v1/files/{file_id}` | 逻辑删除未使用文件 |
+
+创建请求：
+
+```json
+{"file_name":"QC_Report_0714.pdf","size_bytes":2516582,"media_type":"application/pdf","sha256":"optional"}
+```
+
+创建响应包含 `file_id, upload_url, upload_headers, expires_at, max_size_bytes`。文件详情至少包含原文件名、实际 MIME、大小、kind、页数、状态和失败原因。
+
+## 5. OCR 任务
+
+### 5.1 创建
+
+`POST /api/v1/ocr/jobs`，成功返回 `202 Accepted`。
+
+```json
+{
+  "name": "轴承套圈质量复核",
+  "file_id": "019...",
+  "model_id": "steel",
+  "model_version": "2.0.3",
+  "pages": null,
+  "options": {},
+  "client_reference": null
+}
+```
+
+响应包含 `id, status, stage, progress, created_at`。
+
+### 5.2 列表与详情
+
+`GET /api/v1/ocr/jobs` 支持：`query`（任务名/文件名）、`status`（多值）、`sort=created_at|-created_at`、`cursor`、`limit`（默认 20，最大 100）。
+
+任务摘要包含：
+
+```text
+id, name, file{id,name,kind,media_type}, created_at,
+model{id,name,version}, page_count, completed_pages, failed_pages,
+status, stage, review_status, progress, duration_ms,
+result_count, review_count, created_by{id,name}, error
+```
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/v1/ocr/jobs/{job_id}` | 详情和最新进度 |
+| DELETE | `/api/v1/ocr/jobs/{job_id}` | 逻辑删除，204；默认不立即删除原文件 |
+| POST | `/api/v1/ocr/jobs/{job_id}/cancel` | 取消排队或运行任务 |
+| POST | `/api/v1/ocr/jobs/{job_id}/retry` | 重试失败任务或失败页面 |
+
+详情补充 `total_pages, started_at, finished_at, updated_at/revision, error{code,message}`。
+
+### 5.3 SSE
+
+`GET /api/v1/ocr/jobs/{job_id}/events`
+
+事件：`job.status_changed`、`job.progress`、`page.completed`、`page.failed`、`job.completed`、`job.failed`。
+
+```json
+{
+  "job_id":"019...", "status":"running", "stage":"recognizing",
+  "progress":67, "completed_pages":2, "total_pages":3,
+  "updated_at":"2026-07-16T03:31:02Z"
+}
+```
+
+## 6. 页面与 OCR 结果
+
+### 6.1 页面列表
+
+`GET /api/v1/ocr/jobs/{job_id}/pages`
+
+每页包含 `id, page_no, label, status, image, result_count, review_count, processing_ms, error`。`image` 包含短期 `url, thumbnail_url, width_px, height_px, rotation, render_dpi` 及过期时间。
+
+### 6.2 单页结果
+
+`GET /api/v1/ocr/jobs/{job_id}/pages/{page_no}/results`
+
+默认一次返回完整当前页，结构为：
+
+```json
+{
+  "data": {
+    "job_id": "019...", "page_id": "019...", "page_no": 1,
+    "coordinate_system": {"origin":"top_left","unit":"pixel","width_px":2480,"height_px":3508},
+    "items": [{
+      "id":"019...", "reading_order":1, "type":"text_line",
+      "text":"QF10I", "confidence":0.884,
+      "bbox":[840,520,1040,590],
+      "polygon":[[840,520],[1040,520],[1040,590],[840,590]],
+      "display_text":"QF101", "is_corrected":true, "revision":2,
+      "current_correction":{
+        "id":"019...", "text":"QF101",
+        "created_by":{"id":"019...","name":"张三"},
+        "created_at":"2026-07-16T03:35:00Z"
+      },
+      "comment_count":1,
+      "comments":[{
+        "id":"019...", "content":"字符 I 误识别",
+        "author":{"id":"019...","name":"张三"},
+        "created_at":"2026-07-16T03:36:00Z", "updated_at":null
+      }]
+    }]
+  },
+  "request_id":"req_019..."
+}
+```
+
+可选扩展字段：`normalized_polygon, angle, attributes`。若单页超过约 5000 项，可提供 gzip/轻量完整框响应，不能用普通分页导致画布漏框。
+
+## 7. 人工纠正
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/v1/ocr/results/{result_id}/corrections` | 新增纠正 |
+| GET | `/api/v1/ocr/results/{result_id}/corrections` | 查询原文和修订历史 |
+| POST | `/api/v1/ocr/results/{result_id}/corrections/{correction_id}/revert` | 新增一条撤销修订 |
+
+新增请求：`{"corrected_text":"QF101","base_revision":2}`，文本上限 500 字符。响应包含 `id, result_id, corrected_text, revision, created_by, created_at`。版本不匹配返回 409 及当前 revision/display_text。相同幂等键不得产生重复修订。
+
+## 8. 留言
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/v1/ocr/results/{result_id}/comments` | 游标分页查询 |
+| POST | `/api/v1/ocr/results/{result_id}/comments` | 新增 |
+| PATCH | `/api/v1/ocr/results/{result_id}/comments/{comment_id}` | 修改本人留言 |
+| DELETE | `/api/v1/ocr/results/{result_id}/comments/{comment_id}` | 逻辑删除本人留言 |
+
+请求仅允许 `{"content":"..."}`，上限 300 字符。author 和时间由服务端生成；新增、修改和删除响应返回最新 `comment_count`。
+
+## 9. 导出
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/v1/ocr/jobs/{job_id}/exports` | 创建后台导出 |
+| GET | `/api/v1/ocr/jobs/{job_id}/exports/{export_id}` | 查询状态和短期下载地址 |
+
+创建请求：`{"format":"xlsx","mode":"full","scope":"all_pages"}`。`mode` 支持 `simple | full`。下载地址生成前校验任务权限并明确过期时间。
+
