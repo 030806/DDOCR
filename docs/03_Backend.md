@@ -114,6 +114,8 @@ models/{model_id}/{version}/{artifact_sha256}/...
 
 PostgreSQL 只保存对象键。下载前做权限校验，再生成 5～15 分钟签名 URL。原文件、页面图和导出物使用独立保留策略；删除共享文件前检查引用。
 
+表结构已由 Alembic 迁移 `88d829523673` 落地。ORM 元数据定义位于 `backend/app/models/schema.py`，包含本节列出的 15 张核心关系表、外键、唯一约束、BBox/置信度检查约束及查询索引。`objects` 表暂作为旧接口兼容存储保留，后续 repository 改造完成后再迁移历史数据并移除。
+
 ## 7. 异步任务
 
 流水线：文件校验 → PDF 渲染/图片归一化 → 按页 fan-out → 预处理 → OCR → 结果规范化与事务落库 → 聚合统计。
@@ -135,4 +137,6 @@ PostgreSQL 只保存对象键。下载前做权限校验，再生成 5～15 分�
 - Worker：重复投递、超时重试、单页失败、取消、死信和聚合。
 - 存储：签名上传、哈希、URL 过期、无权下载和生命周期。
 - E2E：上传到识别、刷新恢复、BBox 对齐、纠正、留言和全任务导出。
+# 数据库与迁移
 
+后端业务数据已接入 PostgreSQL，连接串通过 `DDOCR_DATABASE_URL` 配置，数据库结构由 Alembic 管理。开发环境初始化、升级和回退命令见 `backend/README.md`。上传原文件与 Excel 导出物仍写入 `DDOCR_DATA_DIR`，数据库保存其元数据及相对路径。

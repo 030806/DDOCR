@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { CheckCircleFilled, CloudUploadOutlined, SearchOutlined } from '@ant-design/icons-vue'
+import { ref } from 'vue'
 import type { ModelOption } from '../mock'
 
 defineProps<{
@@ -8,20 +9,36 @@ defineProps<{
   currentModel: ModelOption
   jobState: 'ready' | 'running' | 'done'
   progress: number
+  fileName: string
+  fileMeta: string
 }>()
 
 const emit = defineEmits<{
   'update:selectedModel': [value: string]
-  upload: []
+  upload: [file: File]
   run: []
 }>()
+
+const fileInput = ref<HTMLInputElement>()
+
+function chooseFile() {
+  fileInput.value?.click()
+}
+
+function handleFileChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (file) emit('upload', file)
+  input.value = ''
+}
 </script>
 
 <template>
   <section class="control-strip">
-    <div class="upload-block" @click="emit('upload')">
+    <div class="upload-block" @click="chooseFile">
+      <input ref="fileInput" type="file" accept=".pdf,.png,.jpg,.jpeg" hidden @click.stop @change="handleFileChange" />
       <span class="upload-icon"><CloudUploadOutlined /></span>
-      <div><b>QC_Report_0714.pdf</b><small>3 页 · 2.4 MB · PDF</small></div>
+      <div><b>{{ fileName }}</b><small>{{ fileMeta }}</small></div>
       <button class="replace-btn">替换文件</button>
     </div>
     <div class="control-divider"></div>

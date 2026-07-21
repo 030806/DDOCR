@@ -1,37 +1,44 @@
-# DDOCR Mock Backend
+# DDOCR Backend
 
-第一阶段 FastAPI 后端，严格使用 `/api/v1` 和 `snake_case`，提供上传、Mock OCR 任务、状态与结果查询、纠正、留言及 Excel 导出。数据保存在 `backend/data/mock.db`，文件与导出物分别位于 `data/uploads`、`data/exports`。未接入真实 OCR、Celery、PostgreSQL 或对象存储。
+FastAPI 后端，REST 接口统一位于 `/api/v1`。业务数据存储在 PostgreSQL，上传文件和导出文件仍保存在 `DDOCR_DATA_DIR` 指定的本地目录。
 
-## 启动
+## PostgreSQL 配置
 
-需要 Python 3.11：
+复制环境变量示例并填写密码（`.env` 已被 Git 忽略）：
 
 ```powershell
-cd backend
-py -3.11 -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+Copy-Item .env.example .env
 ```
 
-健康检查：`GET http://127.0.0.1:8000/health`。
+关键配置：
 
-## 测试
+```dotenv
+DDOCR_DATABASE_URL=postgresql+psycopg://postgres:your-password@localhost:5432/ddocr
+DDOCR_DATA_DIR=./data
+```
+
+数据库 `ddocr` 需提前创建。首次启动或模型变更后执行迁移：
 
 ```powershell
 cd backend
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python -m alembic upgrade head
+```
+
+查看当前迁移版本：
+
+```powershell
+python -m alembic current
+```
+
+## 启动与测试
+
+```powershell
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 python -m pytest -q
 ```
 
-测试覆盖完整主链路、`bbox` 格式、纠正 revision 冲突、留言保存和 Excel 下载。
+测试使用临时 SQLite 数据库，不会读写开发环境中的 `ddocr`。生产 PostgreSQL 表只通过 Alembic 管理，应用启动不会隐式建表。
 
-## Swagger 验证
-
-1. 启动服务并打开 `http://127.0.0.1:8000/docs`。
-2. 调用 `POST /api/v1/files/upload-sessions` 创建上传会话。
-3. 使用返回的 `upload_url`（Swagger 中对应 `PUT /api/v1/files/{file_id}/content`）上传任意字节。
-4. 调用 `POST /api/v1/files/{file_id}/complete`。
-5. 使用 `model_id=mock`、`model_version=1.0.0` 创建 OCR 任务。
-6. 查询任务、页面和结果，再用结果 ID 验证纠正、留言和导出接口。
-
-OpenAPI JSON 位于 `http://127.0.0.1:8000/openapi.json`。本地 `PUT content` 是首期对对象存储签名上传的替代，后续可替换存储适配器而不改变其余业务接口。
+健康检查：`GET http://127.0.0.1:8000/health`；Swagger：`http://127.0.0.1:8000/docs`。

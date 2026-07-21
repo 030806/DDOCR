@@ -14,6 +14,10 @@
 
 HTTP 错误：400 参数错误、401 未登录、403 无权限、404 不存在、409 幂等/修订冲突、413 文件过大、422 文件或参数不可处理、429 限流/配额、500/502/503 服务或推理异常。
 
+除注册、登录、健康检查和模型目录外，当前 Mock Backend 的文件、OCR、结果、
+纠正、留言和导出接口均要求 `Authorization: Bearer <access_token>`。资源按
+`owner_id` 隔离，访问其他用户资源返回 404。
+
 ```json
 {
   "error": {
@@ -29,13 +33,21 @@ HTTP 错误：400 参数错误、401 未登录、403 无权限、404 不存在�
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
+| POST | `/api/v1/auth/register` | 注册本地账号并返回 Bearer 会话 |
+| POST | `/api/v1/auth/login` | 使用联系电话和密码登录 |
 | GET | `/api/v1/users/me` | 当前用户、角色和权限 |
+| PATCH | `/api/v1/users/me` | 更新姓名、部门和联系电话 |
 | GET | `/api/v1/users/me/preferences` | 获取跨设备偏好，可选 |
 | PATCH | `/api/v1/users/me/preferences` | 部分更新跨设备偏好，可选 |
 | POST | `/api/v1/auth/change-password` | 本地身份修改密码；OIDC 模式由身份系统提供 |
 | POST | `/api/v1/auth/logout` | 注销会话/刷新令牌 |
 
 用户至少返回：`id, name, employee_no, role_names, permissions, department, email, phone_masked, avatar_url, last_login_at`，可包含 `tenant_id`。
+
+本地密码使用随机盐和 PBKDF2-SHA256 保存，任何响应均不得返回密码摘要。
+注册时联系电话必填且唯一，邮箱为可选字段。登录和注册返回
+`access_token, token_type, user`；用户资料、修改密码和退出
+使用 `Authorization: Bearer <access_token>`。
 
 偏好字段：`preferences_version, default_model_id, low_confidence_threshold, default_result_view_mode, show_confidence, default_export_mode, default_zoom`。服务端允许旧客户端缺少新增字段。
 
@@ -66,6 +78,7 @@ HTTP 错误：400 参数错误、401 未登录、403 无权限、404 不存在�
 | POST | `/api/v1/files/upload-sessions` | 创建对象存储直传会话 |
 | POST | `/api/v1/files/{file_id}/complete` | 确认上传并触发校验 |
 | GET | `/api/v1/files/{file_id}` | 查询状态和元数据 |
+| GET | `/api/v1/files/{file_id}/content` | 读取已上传的原始文件内容 |
 | DELETE | `/api/v1/files/{file_id}` | 逻辑删除未使用文件 |
 
 创建请求：
@@ -74,7 +87,7 @@ HTTP 错误：400 参数错误、401 未登录、403 无权限、404 不存在�
 {"file_name":"QC_Report_0714.pdf","size_bytes":2516582,"media_type":"application/pdf","sha256":"optional"}
 ```
 
-创建响应包含 `file_id, upload_url, upload_headers, expires_at, max_size_bytes`。文件详情至少包含原文件名、实际 MIME、大小、kind、页数、状态和失败原因。
+创建响应包含 `file_id, upload_url, upload_headers, expires_at, max_size_bytes`。文件详情至少包含原文件名、实际 MIME、大小、kind、页数、状态和失败原因。本地 Mock Backend 额外保存项目内相对路径 `storage_path`；图片保存 `width_px` 和 `height_px`。
 
 ## 5. OCR 任务
 
@@ -178,6 +191,9 @@ result_count, review_count, created_by{id,name}, error
 
 ## 7. 人工纠正
 
+以下纠正和留言接口要求 `Authorization: Bearer <access_token>`；创建人/作者
+由服务端当前会话生成，客户端不得提交作者字段。
+
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | POST | `/api/v1/ocr/results/{result_id}/corrections` | 新增纠正 |
@@ -205,4 +221,3 @@ result_count, review_count, created_by{id,name}, error
 | GET | `/api/v1/ocr/jobs/{job_id}/exports/{export_id}` | 查询状态和短期下载地址 |
 
 创建请求：`{"format":"xlsx","mode":"full","scope":"all_pages"}`。`mode` 支持 `simple | full`。下载地址生成前校验任务权限并明确过期时间。
-

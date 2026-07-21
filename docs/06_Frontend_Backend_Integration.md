@@ -1,7 +1,7 @@
 # 前后端第一阶段联调
 
-本阶段只将任务查询和 OCR 结果查询接入 FastAPI。文件上传、Konva 展示、
-纠正、留言和导出仍沿用前端现有逻辑。
+当前已将任务查询、OCR 结果查询、文件上传和 OCR 任务创建接入 FastAPI。
+Konva 展示、纠正、留言和导出仍沿用前端现有逻辑。
 
 ## 配置
 
@@ -22,9 +22,11 @@ $env:VITE_BACKEND_BASE_URL = "http://127.0.0.1:8000"
 终端一：
 
 ```powershell
-cd backend
+cd F:\codex\DDOCR\backend
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1  / .venv\Scripts\activate.bat
 python -m pip install -r requirements.txt
-python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+uvicorn app.main:app --reload --port 8000
 ```
 
 终端二：
@@ -43,6 +45,51 @@ npm run dev
 
 Mock Backend 在任务表为空时会自动创建“端子排 OCR 联调示例”。重启后端并
 刷新任务记录即可看到该任务；已有任务时不会重复创建。
+
+## 上传并创建任务
+
+1. 在工作台点击“替换文件”，选择不超过 100 MB 的 PDF、PNG、JPG 或 JPEG。
+2. 点击“开始识别”。
+3. 前端依次调用：
+
+   - `POST /api/v1/files/upload-sessions`
+   - `PUT /api/v1/files/{file_id}/content`
+   - `POST /api/v1/files/{file_id}/complete`
+   - `POST /api/v1/ocr/jobs`
+
+4. 创建成功后自动进入 `/workspace/{job_id}`，并通过结果查询 API 加载该
+   任务结果。Mock Backend 当前只接受 `model_id=mock` 和
+   `model_version=1.0.0`；前端现有模型选择 UI 暂时保留，待真实模型目录
+   联调阶段再替换。
+
+## 上传图片与 Konva 背景
+
+上传文件保存在项目内的 `backend/data/uploads/`。SQLite 文件记录的
+`storage_path` 保存 `uploads/{file_id}` 相对路径，同时保存图片的
+`width_px` 和 `height_px`，不写入开发机绝对路径。
+
+图片内容通过 `GET /api/v1/files/{file_id}/content` 读取。页面查询接口的
+`image.url` 返回该地址。该接口要求 Bearer Token，因此前端先通过 axios 下载
+Blob，再创建临时 Object URL 交给 Konva。PNG/JPG/JPEG 背景保持
+图片宽高比居中适配 700 × 760 画布；OCR bbox 使用同一缩放和偏移。没有
+图片 URL 的旧 Mock 页面继续显示原有模拟背景。
+
+当前 PDF 文件仍可上传和创建任务，但不会直接作为浏览器图片展示；PDF
+逐页渲染需要后续单独接入。
+
+## 登录、注册与个人信息
+
+未登录访问业务路由会跳转 `/auth`。登录使用联系电话和密码；注册时联系电话
+必填且唯一，邮箱可选。注册成功后自动登录；登录令牌保存在
+`ddocr.auth.token`，axios 自动附加 Bearer 请求头。用户和会话分别保存为
+SQLite 的 `user` 与 `session` 记录。
+
+右上角菜单通过 `GET /api/v1/users/me` 展示姓名、角色、员工编号、部门、
+邮箱、脱敏电话和最近登录时间。个人资料更新、修改密码和退出分别调用：
+
+- `PATCH /api/v1/users/me`
+- `POST /api/v1/auth/change-password`
+- `POST /api/v1/auth/logout`
 
 ## 验证数据来源
 

@@ -36,3 +36,28 @@ class ExportCreate(BaseModel):
     mode: Literal["simple", "full"] = "full"
     scope: Literal["all_pages"] = "all_pages"
 
+
+class RegisterCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    email: str | None = Field(default=None, max_length=160)
+    phone: str = Field(min_length=7, max_length=30)
+    password: str = Field(min_length=8, max_length=128)
+    employee_no: str = Field(min_length=1, max_length=40)
+    department: str = Field(default="", max_length=100)
+
+
+class LoginCreate(BaseModel):
+    phone: str = Field(min_length=7, max_length=30)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class ProfileUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    department: str | None = Field(default=None, max_length=100)
+    phone: str | None = Field(default=None, max_length=30)
+
+
+class PasswordChange(BaseModel):
+    current_password: str = Field(min_length=1, max_length=128)
+    new_password: str = Field(min_length=8, max_length=128)
+

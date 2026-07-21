@@ -41,7 +41,7 @@ const emit = defineEmits<{
         <span>{{ currentPage }} / {{ pages.length }}</span>
         <button :disabled="currentPage === pages.length" @click="emit('pageChange', currentPage + 1)"><RightOutlined /></button>
       </div>
-      <div class="document-name">{{ page.label }} <span>·</span> 原始尺寸 2480 × 3508 px</div>
+      <div class="document-name">{{ page.label }} <span>·</span> 原始尺寸 {{ page.sourceWidth || 2480 }} × {{ page.sourceHeight || 3508 }} px</div>
       <div class="zoom-control">
         <button @click="emit('zoomChange', Math.max(.55, zoom - .1))"><ZoomOutOutlined /></button>
         <span>{{ Math.round(zoom * 100) }}%</span>

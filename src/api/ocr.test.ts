@@ -1,5 +1,8 @@
-import { describe, expect, it } from 'vitest'
-import { mapApiJob, mapApiResult } from './ocr'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { apiClient } from './client'
+import { createComment, createCorrection, deleteComment, getOcrPages, mapApiJob, mapApiResult, updateComment, uploadAndCreateOcrTask } from './ocr'
+
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('OCR API adapters', () => {
   it('maps a FastAPI job to the existing task view model', () => {
@@ -18,10 +21,148 @@ describe('OCR API adapters', () => {
     const item = mapApiResult({
       id: 'result-1', text: 'QF10I', confidence: 0.884,
       bbox: [620, 240, 940, 320], display_text: 'QF10I',
-      is_corrected: false, comments: [],
+      is_corrected: false, comments: [], revision: 0,
     })
     expect(item.score).toBe(0.884)
     expect(item.bbox).toEqual([620, 240, 940, 320])
     expect(item.text).toBe('QF10I')
+  })
+
+  it('uploads a file, completes it, and creates a mock OCR job', async () => {
+    const post = vi.spyOn(apiClient, 'post')
+      .mockResolvedValueOnce({
+        data: {
+          data: {
+            file_id: 'file-1',
+            upload_url: 'http://127.0.0.1:8000/api/v1/files/file-1/content',
+            upload_headers: { 'content-type': 'image/png' },
+          },
+          request_id: 'req-1',
+        },
+      })
+      .mockResolvedValueOnce({ data: { data: { status: 'ready' }, request_id: 'req-2' } })
+      .mockResolvedValueOnce({
+        data: {
+          data: {
+            id: 'job-1', status: 'succeeded', stage: 'completed',
+            progress: 100, created_at: '2026-07-20T00:00:00Z',
+          },
+          request_id: 'req-3',
+        },
+      })
+    const put = vi.spyOn(apiClient, 'put').mockResolvedValue({
+      data: { data: { status: 'validating' }, request_id: 'req-upload' },
+    })
+    const stages: number[] = []
+
+    const taskId = await uploadAndCreateOcrTask(
+      new File(['image'], 'terminal.png', { type: 'image/png' }),
+      (_stage, progress) => stages.push(progress),
+    )
+
+    expect(taskId).toBe('job-1')
+    expect(post).toHaveBeenNthCalledWith(1, '/files/upload-sessions', {
+      file_name: 'terminal.png',
+      size_bytes: 5,
+      media_type: 'image/png',
+    })
+    expect(put).toHaveBeenCalledWith(
+      '/files/file-1/content',
+      expect.any(File),
+      expect.objectContaining({ headers: expect.objectContaining({ 'Content-Type': 'image/png' }) }),
+    )
+    expect(post).toHaveBeenNthCalledWith(2, '/files/file-1/complete')
+    expect(post).toHaveBeenNthCalledWith(3, '/ocr/jobs', expect.objectContaining({
+      name: 'terminal',
+      file_id: 'file-1',
+      model_id: 'mock',
+      model_version: '1.0.0',
+    }))
+    expect(stages[stages.length - 1]).toBe(100)
+  })
+
+  it('keeps the uploaded image URL and dimensions on API pages', async () => {
+    const createObjectURL = vi.fn(() => 'blob:protected-image')
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL: vi.fn() })
+    vi.spyOn(apiClient, 'get')
+      .mockResolvedValueOnce({
+        data: {
+          data: {
+            items: [{
+              page_no: 1,
+              label: '第 1 页',
+              image: {
+                url: '/api/v1/files/file-1/content',
+                width_px: 1920,
+                height_px: 1080,
+              },
+            }],
+          },
+          request_id: 'req-pages',
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          data: { page_no: 1, items: [] },
+          request_id: 'req-results',
+        },
+      })
+      .mockResolvedValueOnce({ data: new Blob(['image']) })
+
+    const pages = await getOcrPages('job-1')
+
+    expect(pages[0]).toEqual({
+      no: 1,
+      label: '第 1 页',
+      items: [],
+      imageUrl: 'blob:protected-image',
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+    })
+    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob))
+  })
+
+  it('creates, updates, and deletes comments with the server author', async () => {
+    const serverComment = {
+      id: 'comment-1', content: '请复核',
+      author: { id: 'user-1', name: '林工' },
+      created_at: '2026-07-21T08:00:00Z', updated_at: null,
+    }
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: { data: serverComment, request_id: 'req-comment' },
+    })
+    const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({
+      data: { data: { ...serverComment, content: '已复核' }, request_id: 'req-update' },
+    })
+    const remove = vi.spyOn(apiClient, 'delete').mockResolvedValue({})
+
+    await expect(createComment('result-1', '请复核')).resolves.toMatchObject({
+      id: 'comment-1', authorId: 'user-1', author: '林工', content: '请复核',
+    })
+    await expect(updateComment('result-1', 'comment-1', '已复核')).resolves.toMatchObject({ content: '已复核' })
+    await deleteComment('result-1', 'comment-1')
+
+    expect(post).toHaveBeenCalledWith('/ocr/results/result-1/comments', { content: '请复核' })
+    expect(patch).toHaveBeenCalledWith('/ocr/results/result-1/comments/comment-1', { content: '已复核' })
+    expect(remove).toHaveBeenCalledWith('/ocr/results/result-1/comments/comment-1')
+  })
+
+  it('submits correction text with the current revision', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: {
+        data: {
+          id: 'correction-1', corrected_text: 'XT-102', revision: 2,
+          created_by: { id: 'user-1', name: '林工' }, created_at: '2026-07-21T08:00:00Z',
+        },
+        request_id: 'req-correction',
+      },
+    })
+
+    await expect(createCorrection('result-1', 'XT-102', 1)).resolves.toMatchObject({ revision: 2 })
+    expect(post).toHaveBeenCalledWith(
+      '/ocr/results/result-1/corrections',
+      { corrected_text: 'XT-102', base_revision: 1 },
+      { headers: { 'Idempotency-Key': expect.any(String) } },
+    )
   })
 })

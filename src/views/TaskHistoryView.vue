@@ -59,6 +59,8 @@ function openTask(task: OcrTask, review = false) {
 }
 
 async function exportTask(task: OcrTask) {
+  // TODO(integration): This still exports mock.ts pages, not the selected FastAPI
+  // task. Connect the backend export creation/status/download flow.
   const items = pages.filter((page) => task.mockPageNumbers.includes(page.no)).flatMap((page) => page.items)
   if (!items.length) return message.warning('该 Mock 任务暂无可导出结果')
   await exportOcrResults(items, settings.value.defaultExportMode, task.mockPageNumbers[0] || 1)
@@ -66,6 +68,8 @@ async function exportTask(task: OcrTask) {
 }
 
 function deleteTask(task: OcrTask) {
+  // TODO(integration): Add/connect DELETE /ocr/jobs/{job_id}; local removal is
+  // lost on refresh and does not delete or mark the database task.
   Modal.confirm({
     title: '删除任务？',
     content: `确认删除“${task.name}”吗？该操作仅影响当前 Mock 列表。`,

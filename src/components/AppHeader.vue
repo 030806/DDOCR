@@ -10,6 +10,8 @@ const emit = defineEmits<{ openSettings: [] }>()
 const route = useRoute()
 const router = useRouter()
 const isTasksPage = computed(() => route.name === 'tasks')
+// TODO(integration): Resolve the active FastAPI task name from shared task state;
+// route ids created by the backend are not present in mock/tasks.ts.
 const routeTask = computed(() => typeof route.params.taskId === 'string' ? findMockTask(route.params.taskId) : undefined)
 const workspaceFile = computed(() => routeTask.value?.fileName || 'QC_Report_0714.pdf')
 </script>

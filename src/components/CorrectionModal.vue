@@ -2,7 +2,7 @@
 import { ref, watch } from 'vue'
 import type { OcrItem } from '../mock'
 
-const props = defineProps<{ open: boolean; item?: OcrItem }>()
+const props = defineProps<{ open: boolean; item?: OcrItem; saving?: boolean }>()
 const emit = defineEmits<{ 'update:open': [open: boolean]; save: [text: string] }>()
 const correctionText = ref('')
 
@@ -16,7 +16,7 @@ function save() {
 </script>
 
 <template>
-  <a-modal :open="open" title="纠正识别文字" ok-text="保存纠正" cancel-text="取消" @update:open="emit('update:open', $event)" @ok="save">
+  <a-modal :open="open" title="纠正识别文字" ok-text="保存纠正" cancel-text="取消" :confirm-loading="saving" @update:open="emit('update:open', $event)" @ok="save">
     <div class="modal-label">原始识别</div>
     <div class="original-text">{{ item?.text }}</div>
     <div class="modal-label">纠正内容</div>

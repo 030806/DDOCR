@@ -2,12 +2,15 @@
 import { ref } from 'vue'
 import { KeyOutlined, LogoutOutlined, UserOutlined } from '@ant-design/icons-vue'
 import { Modal, message } from 'ant-design-vue'
-import { mockUser } from '../mock/user'
+import { useRouter } from 'vue-router'
+import { useAuth } from '../composables/useAuth'
 import ProfileDrawer from './ProfileDrawer.vue'
 import PasswordModal from './PasswordModal.vue'
 
 const profileOpen = ref(false)
 const passwordOpen = ref(false)
+const router = useRouter()
+const { user, logout } = useAuth()
 
 function handleMenu({ key }: { key: string | number }) {
   if (key === 'profile') profileOpen.value = true
@@ -15,10 +18,14 @@ function handleMenu({ key }: { key: string | number }) {
   if (key === 'logout') {
     Modal.confirm({
       title: '退出登录？',
-      content: '当前为前端 Mock 登录状态，退出不会清除任务和设置。',
+      content: '退出后需要重新登录，任务和设置数据不会被删除。',
       okText: '退出登录',
       cancelText: '取消',
-      onOk: () => message.success('已退出登录（Mock）'),
+      onOk: async () => {
+        await logout()
+        message.success('已退出登录')
+        await router.replace('/auth')
+      },
     })
   }
 }
@@ -26,10 +33,10 @@ function handleMenu({ key }: { key: string | number }) {
 
 <template>
   <a-dropdown :trigger="['click']" placement="bottomRight">
-    <button class="avatar" aria-label="用户菜单">{{ mockUser.displayInitial }}</button>
+    <button class="avatar" aria-label="用户菜单">{{ user?.name?.slice(0, 1) || '用' }}</button>
     <template #overlay>
       <a-menu class="user-dropdown" @click="handleMenu">
-        <a-menu-item key="identity" disabled><div class="user-identity"><b>{{ mockUser.name }}</b><small>{{ mockUser.role }}</small></div></a-menu-item>
+        <a-menu-item key="identity" disabled><div class="user-identity"><b>{{ user?.name || '当前用户' }}</b><small>{{ user?.roleNames?.join('、') || '已登录' }}</small></div></a-menu-item>
         <a-menu-divider />
         <a-menu-item key="profile"><UserOutlined /> 个人资料</a-menu-item>
         <a-menu-item key="password"><KeyOutlined /> 修改密码</a-menu-item>

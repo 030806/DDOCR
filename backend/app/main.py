@@ -4,6 +4,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from dotenv import load_dotenv
 
 from app.api.routes import router
 from app.models.store import Store
@@ -11,7 +12,13 @@ from app.services.core import MockOcrService
 from app.utils.common import uid
 
 
-def create_app(data_dir: str | None = None) -> FastAPI:
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+
+def create_app(
+    data_dir: str | None = None,
+    database_url: str | None = None,
+) -> FastAPI:
     app = FastAPI(
         title="DDOCR Mock Backend",
         version="0.1.0",
@@ -23,8 +30,10 @@ def create_app(data_dir: str | None = None) -> FastAPI:
         default_data_dir,
     )
     root = Path(configured_data_dir)
-    app.state.service = MockOcrService(Store(root))
-    app.state.service.ensure_demo_job()
+    configured_database_url = database_url or os.getenv("DDOCR_DATABASE_URL")
+    if not configured_database_url:
+        configured_database_url = f"sqlite:///{(root / 'ddocr.db').as_posix()}"
+    app.state.service = MockOcrService(Store(root, configured_database_url))
     app.include_router(router)
 
     @app.get("/health")

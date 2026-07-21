@@ -3,14 +3,18 @@ export type OcrItem = {
   text: string
   score: number
   bbox: [number, number, number, number]
+  revision?: number
   corrected?: string
-  comments: { id: string; author: string; content: string; time: string }[]
+  comments: { id: string; authorId?: string; author: string; content: string; time: string; updatedAt?: string | null }[]
 }
 
 export type MockPage = {
   no: number
   label: string
   items: OcrItem[]
+  imageUrl?: string
+  sourceWidth?: number
+  sourceHeight?: number
 }
 
 export type ModelOption = {
