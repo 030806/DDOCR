@@ -9,6 +9,11 @@ from openpyxl import Workbook
 from PIL import Image, UnidentifiedImageError
 
 from app.models.store import Store
+from app.repositories.auth import SessionRepository, TenantRepository, UserRepository
+from app.repositories.correction_comment import CommentRepository, CorrectionRepository
+from app.repositories.file_job import FileRepository, OCRJobRepository
+from app.repositories.export_idempotency import ExportRepository, IdempotencyRepository
+from app.repositories.page_result import OCRResultRepository, PageRepository
 from app.schemas.contracts import (
     CorrectionCreate,
     ExportCreate,
@@ -23,6 +28,17 @@ MAX_FILE_SIZE_BYTES = 104_857_600
 class MockOcrService:
     def __init__(self, store: Store) -> None:
         self.store = store
+        self.tenants = TenantRepository(store.engine)
+        self.users = UserRepository(store.engine)
+        self.sessions = SessionRepository(store.engine)
+        self.files = FileRepository(store.engine)
+        self.jobs = OCRJobRepository(store.engine)
+        self.page_repository = PageRepository(store.engine)
+        self.result_repository = OCRResultRepository(store.engine)
+        self.correction_repository = CorrectionRepository(store.engine)
+        self.comment_repository = CommentRepository(store.engine)
+        self.export_repository = ExportRepository(store.engine)
+        self.idempotency_repository = IdempotencyRepository(store.engine)
 
     @staticmethod
     def _password_hash(password: str, salt_hex: str | None = None) -> tuple[str, str]:
@@ -56,11 +72,11 @@ class MockOcrService:
         self._validate_password(values["password"])
         email = (values.get("email") or "").strip().lower()
         phone = values["phone"].strip()
-        if email and any(user.get("email") == email for user in self.store.all("user")):
+        if email and self.users.find_by_email(email):
             raise HTTPException(409, "Email is already registered")
-        if any(user.get("phone") == phone for user in self.store.all("user")):
+        if self.users.find_by_phone(phone):
             raise HTTPException(409, "Phone is already registered")
-        if any(user["employee_no"] == values["employee_no"] for user in self.store.all("user")):
+        if self.users.find_by_employee_no(values["employee_no"]):
             raise HTTPException(409, "Employee number is already registered")
         salt, password_hash = self._password_hash(values.pop("password"))
         user_id = uid()
@@ -78,15 +94,13 @@ class MockOcrService:
             "last_login_at": None,
             "deleted": False,
         }
-        self.store.put("user", user_id, user)
+        tenant_id = self.tenants.ensure_default()
+        self.users.create(tenant_id, user)
         return self.create_session(user)
 
     def login_user(self, phone: str, password: str) -> dict[str, Any]:
         normalized = phone.strip()
-        user = next(
-            (item for item in self.store.all("user") if item.get("phone") == normalized and not item.get("deleted")),
-            None,
-        )
+        user = self.users.find_by_phone(normalized)
         if not user or not self._password_matches(password, user):
             raise HTTPException(401, "Invalid phone or password")
         return self.create_session(user)
@@ -94,34 +108,26 @@ class MockOcrService:
     def create_session(self, user: dict[str, Any]) -> dict[str, Any]:
         token = secrets.token_urlsafe(32)
         user["last_login_at"] = now()
-        self.store.put("user", user["id"], user)
-        self.store.put("session", token, {
-            "token": token,
-            "user_id": user["id"],
-            "created_at": now(),
-            "revoked": False,
-        })
+        self.users.update(user["id"], {"last_login_at": user["last_login_at"]})
+        self.sessions.create(token, user["id"], now())
         return {"access_token": token, "token_type": "bearer", "user": self.public_user(user)}
 
     def session_user(self, token: str) -> dict[str, Any]:
-        session = self.store.get("session", token)
-        if not session or session.get("revoked"):
+        user_id = self.sessions.user_id_for_active_token(token)
+        if not user_id:
             raise HTTPException(401, "Invalid or expired session")
-        user = self.store.get("user", session["user_id"])
+        user = self.users.get(user_id)
         if not user or user.get("deleted"):
             raise HTTPException(401, "User not found")
         return user
 
     def revoke_session(self, token: str) -> None:
-        session = self.store.get("session", token)
-        if session:
-            session["revoked"] = True
-            self.store.put("session", token, session)
+        self.sessions.revoke(token)
 
     def update_user(self, user: dict[str, Any], values: dict[str, Any]) -> dict[str, Any]:
         user.update({key: value for key, value in values.items() if value is not None})
         user["updated_at"] = now()
-        self.store.put("user", user["id"], user)
+        self.users.update(user["id"], values)
         return self.public_user(user)
 
     def change_password(self, user: dict[str, Any], current: str, new: str) -> None:
@@ -132,39 +138,10 @@ class MockOcrService:
         user["password_salt"] = salt
         user["password_hash"] = password_hash
         user["updated_at"] = now()
-        self.store.put("user", user["id"], user)
-
-    def ensure_demo_job(self) -> None:
-        """Seed one API-backed task when the mock backend starts empty."""
-        if self.store.all("job"):
-            return
-
-        file_id = "demo-terminal-file"
-        if not self.store.get("file", file_id):
-            self.store.put(
-                "file",
-                file_id,
-                {
-                    "id": file_id,
-                    "file_name": "terminal_demo.png",
-                    "size_bytes": 0,
-                    "media_type": "image/png",
-                    "status": "ready",
-                    "page_count": 1,
-                    "failure_reason": None,
-                    "created_at": now(),
-                    "deleted": False,
-                },
-            )
-
-        self.create_job(
-            JobCreate(
-                name="端子排 OCR 联调示例",
-                file_id=file_id,
-                model_id="mock",
-                model_version="1.0.0",
-            )
-        )
+        self.users.update(user["id"], {
+            "password_salt": salt,
+            "password_hash": password_hash,
+        })
 
     def create_upload(
         self,
@@ -187,7 +164,7 @@ class MockOcrService:
             "created_at": now(),
             "deleted": False,
         }
-        self.store.put("file", file_id, item)
+        self.files.create(item)
         return {
             "file_id": file_id,
             "upload_url": f"{base_url}api/v1/files/{file_id}/content",
@@ -201,7 +178,7 @@ class MockOcrService:
         file_id: str,
         owner_id: str | None = None,
     ) -> dict[str, Any]:
-        item = self.store.get("file", file_id)
+        item = self.files.get(file_id)
         if not item or item.get("deleted"):
             raise HTTPException(404, "File not found")
         if owner_id is not None and item.get("owner_id") != owner_id:
@@ -222,7 +199,7 @@ class MockOcrService:
         upload_path.write_bytes(content)
         item["actual_size_bytes"] = len(content)
         item["status"] = "validating"
-        self.store.put("file", file_id, item)
+        self.files.update(item)
         return item
 
     def complete(
@@ -244,7 +221,7 @@ class MockOcrService:
             height_px=height_px,
             failure_reason=None,
         )
-        return self.store.put("file", file_id, item)
+        return self.files.update(item)
 
     def content_path(self, item: dict[str, Any]) -> Path:
         storage_path = item.get("storage_path")
@@ -291,19 +268,7 @@ class MockOcrService:
             ("QF10I", 0.884, [620, 240, 940, 320]),
             ("24V DC", 0.96, [180, 410, 520, 490]),
         ]
-        result_ids = self._create_mock_results(
-            job_id,
-            page_id,
-            mock_results,
-        )
-        page = self._build_page(
-            job_id,
-            page_id,
-            result_ids,
-            uploaded_file.get("width_px", 1200),
-            uploaded_file.get("height_px", 1600),
-        )
-        self.store.put("page", page_id, page)
+        result_ids = [uid() for _ in mock_results]
 
         job = {
             "id": job_id,
@@ -327,7 +292,16 @@ class MockOcrService:
             "review_count": 1,
             "deleted": False,
         }
-        self.store.put("job", job_id, job)
+        self.jobs.create(job)
+        page = self._build_page(
+            job_id,
+            page_id,
+            result_ids,
+            uploaded_file.get("width_px", 1200),
+            uploaded_file.get("height_px", 1600),
+        )
+        self.page_repository.create(page)
+        self._create_mock_results(job_id, page_id, result_ids, mock_results)
         response_fields = ("id", "status", "stage", "progress", "created_at")
         return {field: job[field] for field in response_fields}
 
@@ -335,13 +309,12 @@ class MockOcrService:
         self,
         job_id: str,
         page_id: str,
+        result_ids: list[str],
         mock_results: list[tuple[str, float, list[int]]],
     ) -> list[str]:
-        result_ids = []
         for reading_order, mock_result in enumerate(mock_results, 1):
             text, confidence, bbox = mock_result
-            result_id = uid()
-            result_ids.append(result_id)
+            result_id = result_ids[reading_order - 1]
             polygon = [
                 [bbox[0], bbox[1]],
                 [bbox[2], bbox[1]],
@@ -362,7 +335,7 @@ class MockOcrService:
                 "revision": 0,
                 "current_correction": None,
             }
-            self.store.put("result", result_id, result)
+            self.result_repository.create(result)
         return result_ids
 
     @staticmethod
@@ -399,12 +372,18 @@ class MockOcrService:
         job_id: str,
         owner_id: str | None = None,
     ) -> dict[str, Any]:
-        job = self.store.get("job", job_id)
+        job = self.jobs.get(job_id)
         if not job or job.get("deleted"):
             raise HTTPException(404, "Job not found")
         if owner_id is not None and job.get("owner_id") != owner_id:
             raise HTTPException(404, "Job not found")
         return job
+
+    def all_jobs(self) -> list[dict[str, Any]]:
+        return self.jobs.all()
+
+    def update_file(self, item: dict[str, Any]) -> dict[str, Any]:
+        return self.files.update(item)
 
     def pages(
         self,
@@ -413,9 +392,7 @@ class MockOcrService:
     ) -> list[dict[str, Any]]:
         job = self.job(job_id, owner_id)
         uploaded_file = self.file(job["file_id"], owner_id)
-        pages = [
-            self.store.get("page", page_id) for page_id in job["page_ids"]
-        ]
+        pages = [self.page_repository.get(page_id) for page_id in job["page_ids"]]
         public_pages = [
             self._public_page(page) for page in pages if page is not None
         ]
@@ -445,21 +422,21 @@ class MockOcrService:
         result_id: str,
         owner_id: str | None = None,
     ) -> dict[str, Any]:
-        result = self.store.get("result", result_id)
+        result = self.result_repository.get(result_id)
         if not result:
             raise HTTPException(404, "OCR result not found")
         if owner_id is not None:
             self.job(result["job_id"], owner_id)
         return result
 
+    def page(self, page_id: str) -> dict[str, Any] | None:
+        return self.page_repository.get(page_id)
+
     def comments(self, result_id: str) -> list[dict[str, Any]]:
-        all_comments = self.store.all("comment")
-        comments = [
-            comment
-            for comment in all_comments
-            if comment["result_id"] == result_id and not comment.get("deleted")
-        ]
-        return sorted(comments, key=lambda comment: comment["created_at"])
+        return self.comment_repository.list_for_result(result_id)
+
+    def corrections(self, result_id: str) -> list[dict[str, Any]]:
+        return self.correction_repository.list_for_result(result_id)
 
     def public_result(self, result: dict[str, Any]) -> dict[str, Any]:
         correction = result.get("current_correction")
@@ -506,10 +483,10 @@ class MockOcrService:
             "created_by": {"id": actor["id"], "name": actor["name"]},
             "created_at": now(),
         }
-        self.store.put("correction", correction["id"], correction)
+        self.correction_repository.create(correction, actor["id"], body.base_revision)
         result["revision"] = correction["revision"]
         result["current_correction"] = correction
-        self.store.put("result", result_id, result)
+        self.result_repository.update_revision(result)
         return correction
 
     def add_comment(
@@ -528,9 +505,39 @@ class MockOcrService:
             "updated_at": None,
             "deleted": False,
         }
-        self.store.put("comment", comment["id"], comment)
+        self.comment_repository.create(comment, actor["id"])
         comment_count = len(self.comments(result_id))
         return {**comment, "comment_count": comment_count}
+
+    def update_comment(
+        self,
+        result_id: str,
+        comment_id: str,
+        content: str,
+        actor: dict[str, Any],
+    ) -> dict[str, Any]:
+        self.result(result_id, actor["id"])
+        comment = self.comment_repository.get(comment_id)
+        if not comment or comment["result_id"] != result_id or comment.get("deleted"):
+            raise HTTPException(404, "Comment not found")
+        if comment["author"]["id"] != actor["id"]:
+            raise HTTPException(403, "Only the comment author can edit it")
+        updated = self.comment_repository.update(comment_id, content)
+        return {**updated, "comment_count": len(self.comments(result_id))}
+
+    def delete_comment(
+        self,
+        result_id: str,
+        comment_id: str,
+        actor: dict[str, Any],
+    ) -> None:
+        self.result(result_id, actor["id"])
+        comment = self.comment_repository.get(comment_id)
+        if not comment or comment["result_id"] != result_id:
+            raise HTTPException(404, "Comment not found")
+        if comment["author"]["id"] != actor["id"]:
+            raise HTTPException(403, "Only the comment author can delete it")
+        self.comment_repository.delete(comment_id)
 
     def export(
         self,
@@ -573,8 +580,40 @@ class MockOcrService:
                 f"{export_id}/download"
             ),
         }
-        self.store.put("export", export_id, export)
+        self.export_repository.create(export, owner_id)
         return export
+
+    def get_export(
+        self,
+        job_id: str,
+        export_id: str,
+        owner_id: str,
+    ) -> dict[str, Any]:
+        self.job(job_id, owner_id)
+        export = self.export_repository.get(export_id)
+        if not export or export["job_id"] != job_id:
+            raise HTTPException(404, "Export not found")
+        return export
+
+    def idempotent_response(
+        self,
+        user_id: str,
+        route: str,
+        key: str,
+    ) -> dict[str, Any] | None:
+        return self.idempotency_repository.get(user_id, route, key)
+
+    def save_idempotent_response(
+        self,
+        user_id: str,
+        route: str,
+        key: str,
+        request_payload: str,
+        response_body: dict[str, Any],
+    ) -> None:
+        self.idempotency_repository.create(
+            user_id, route, key, request_payload, response_body
+        )
 
     def _append_export_rows(
         self,
@@ -582,7 +621,7 @@ class MockOcrService:
         job: dict[str, Any],
     ) -> None:
         for page_id in job["page_ids"]:
-            page = self.store.get("page", page_id)
+            page = self.page_repository.get(page_id)
             if page is None:
                 continue
             for result_id in page["result_ids"]:

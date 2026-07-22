@@ -16,7 +16,7 @@ from app.schemas.contracts import (
     UploadSessionCreate,
 )
 from app.services.core import MockOcrService
-from app.utils.common import envelope, now
+from app.utils.common import envelope
 
 router = APIRouter(prefix="/api/v1")
 
@@ -186,7 +186,7 @@ def delete_file(
     ocr_service = service(request)
     actor = authenticated_user(request, authorization)
     uploaded_file = ocr_service.file(file_id, actor["id"])
-    jobs = ocr_service.store.all("job")
+    jobs = ocr_service.all_jobs()
     is_in_use = any(
         job["file_id"] == file_id
         and job.get("owner_id") == actor["id"]
@@ -197,7 +197,7 @@ def delete_file(
         return Response(status_code=409)
 
     uploaded_file["deleted"] = True
-    ocr_service.store.put("file", file_id, uploaded_file)
+    ocr_service.update_file(uploaded_file)
     return Response(status_code=204)
 
 
@@ -224,7 +224,7 @@ def jobs(
 ) -> dict[str, Any]:
     del cursor
     actor = authenticated_user(request, authorization)
-    all_jobs = service(request).store.all("job")
+    all_jobs = service(request).all_jobs()
     items = [
         job for job in all_jobs
         if job.get("owner_id") == actor["id"] and not job.get("deleted")
@@ -282,7 +282,7 @@ def results(
     actor = authenticated_user(request, authorization)
     job_data = ocr_service.job(job_id, actor["id"])
     pages_data = [
-        ocr_service.store.get("page", page_id)
+        ocr_service.page(page_id)
         for page_id in job_data["page_ids"]
     ]
     page = next(
@@ -326,15 +326,21 @@ def correct(
 ) -> dict[str, Any]:
     ocr_service = service(request)
     actor = authenticated_user(request, authorization)
-    cache_key = f"correction:{actor['id']}:{result_id}:{idempotency_key}"
+    idempotency_route = f"/ocr/results/{result_id}/corrections"
     if idempotency_key:
-        cached = ocr_service.store.get("idempotency", cache_key)
+        cached = ocr_service.idempotent_response(
+            actor["id"], idempotency_route, idempotency_key
+        )
         if cached:
             return envelope(cached)
 
     correction = ocr_service.add_correction(result_id, body, actor)
     if idempotency_key:
-        ocr_service.store.put("idempotency", cache_key, correction)
+        request_payload = f"{body.base_revision}:{body.corrected_text}"
+        ocr_service.save_idempotent_response(
+            actor["id"], idempotency_route, idempotency_key,
+            request_payload, correction,
+        )
     return envelope(correction)
 
 
@@ -347,13 +353,9 @@ def corrections(
     ocr_service = service(request)
     actor = authenticated_user(request, authorization)
     ocr_service.result(result_id, actor["id"])
-    all_corrections = ocr_service.store.all("correction")
-    items = [
-        item for item in all_corrections if item["result_id"] == result_id
-    ]
-    sorted_items = sorted(items, key=lambda item: item["revision"])
+    items = ocr_service.corrections(result_id)
     data = {
-        "items": sorted_items,
+        "items": items,
         "next_cursor": None,
         "total": len(items),
     }
@@ -396,18 +398,8 @@ def update_comment(
 ) -> dict[str, Any]:
     ocr_service = service(request)
     actor = authenticated_user(request, authorization)
-    ocr_service.result(result_id, actor["id"])
-    comment = ocr_service.store.get("comment", comment_id)
-    is_missing = not comment or comment["result_id"] != result_id
-    if is_missing or comment.get("deleted"):
-        raise HTTPException(404, "Comment not found")
-    if comment["author"]["id"] != actor["id"]:
-        raise HTTPException(403, "Only the comment author can edit it")
-
-    comment["content"] = body.content
-    comment["updated_at"] = now()
-    ocr_service.store.put("comment", comment_id, comment)
-    return envelope({**comment, "comment_count": len(ocr_service.comments(result_id))})
+    comment = ocr_service.update_comment(result_id, comment_id, body.content, actor)
+    return envelope(comment)
 
 
 @router.delete(
@@ -422,15 +414,7 @@ def delete_comment(
 ) -> Response:
     ocr_service = service(request)
     actor = authenticated_user(request, authorization)
-    ocr_service.result(result_id, actor["id"])
-    comment = ocr_service.store.get("comment", comment_id)
-    if not comment or comment["result_id"] != result_id:
-        raise HTTPException(404, "Comment not found")
-    if comment["author"]["id"] != actor["id"]:
-        raise HTTPException(403, "Only the comment author can delete it")
-
-    comment["deleted"] = True
-    ocr_service.store.put("comment", comment_id, comment)
+    ocr_service.delete_comment(result_id, comment_id, actor)
     return Response(status_code=204)
 
 
@@ -455,10 +439,7 @@ def get_export(
 ) -> dict[str, Any]:
     ocr_service = service(request)
     actor = authenticated_user(request, authorization)
-    ocr_service.job(job_id, actor["id"])
-    export = ocr_service.store.get("export", export_id)
-    if not export or export["job_id"] != job_id:
-        raise HTTPException(404, "Export not found")
+    export = ocr_service.get_export(job_id, export_id, actor["id"])
     return envelope(export)
 
 
@@ -471,10 +452,7 @@ def download(
 ) -> FileResponse:
     ocr_service = service(request)
     actor = authenticated_user(request, authorization)
-    ocr_service.job(job_id, actor["id"])
-    export = ocr_service.store.get("export", export_id)
-    if not export or export["job_id"] != job_id:
-        raise HTTPException(404, "Export not found")
+    ocr_service.get_export(job_id, export_id, actor["id"])
 
     export_path = ocr_service.store.exports / f"{export_id}.xlsx"
     filename = f"ocr-{job_id}.xlsx"

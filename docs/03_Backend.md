@@ -67,15 +67,16 @@ backend/
 | `user_preferences` | 可选 preferences_version 与 JSONB 设置 |
 | `models` | 逻辑模型、能力、语言和状态 |
 | `model_versions` | 不可变版本、runtime、制品 URI/哈希和配置 |
-| `file_objects` | owner、文件名、真实 MIME、大小、SHA-256、对象键、页数、状态、删除时间 |
-| `document_pages` | file、页码、标准图/缩略图对象键、宽高、DPI、旋转 |
+| `files` | user、文件名、真实 MIME、大小、SHA-256、对象键、页数、状态、删除时间 |
+| `document_pages` | file 的标准化源页面、标准图/缩略图对象键、宽高、DPI、旋转 |
+| `pages` | OCR job 的运行时页面、页码、状态、展示图和结果 ID |
 | `ocr_jobs` | tenant、creator、file、模型版本、参数快照、status/stage/review_status、进度计数、错误和时间 |
 | `job_pages` | job/page、页面状态、结果数、耗时、重试次数和错误 |
-| `ocr_results` | 原文、confidence、bbox 四列、polygon、阅读顺序、当前修订 |
-| `ocr_corrections` | result、revision、base_revision、纠正文、作者、时间和撤销指向 |
-| `ocr_comments` | result、纯文本内容、作者、创建/更新时间和逻辑删除字段 |
-| `export_jobs` | job、格式、模式、范围、状态、对象键、过期时间和错误 |
-| `idempotency_keys` | 用户、路由、键、请求哈希和原响应 |
+| `results` | page、原文、confidence、bbox 四列、polygon、阅读顺序、当前修订 |
+| `corrections` | result、revision、base_revision、纠正文、作者、时间和撤销指向 |
+| `comments` | result、纯文本内容、作者、创建/更新时间和逻辑删除字段 |
+| `exports` | job、格式、模式、范围、状态、对象键、过期时间和错误 |
+| `idempotency_records` | 用户、路由、键、请求哈希和原响应 |
 | `audit_logs` | actor、action、resource 和审计元数据 |
 
 关键唯一约束：`model_id + version`、`file_id + page_no`、`job_id + page_id`、`result_id + revision`。常用索引：任务租户/状态/创建时间、结果页面/阅读顺序、纠正结果/版本、留言结果/时间。

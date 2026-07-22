@@ -59,6 +59,9 @@ users = Table(
     Column("department", String(200)),
     Column("password_salt", String(64)),
     Column("password_hash", String(128)),
+    Column("role_names", JSON_VALUE, nullable=False, server_default="[]"),
+    Column("permissions", JSON_VALUE, nullable=False, server_default="[]"),
+    Column("avatar_url", Text),
     Column("status", String(32), nullable=False, server_default="active"),
     Column("last_login_at", DateTime(timezone=True)),
     Column("deleted_at", DateTime(timezone=True)),
@@ -69,6 +72,17 @@ users = Table(
     CheckConstraint("status IN ('active','locked','disabled')", name="ck_users_status"),
 )
 Index("ix_users_tenant_status", users.c.tenant_id, users.c.status)
+
+sessions = Table(
+    "sessions", Base.metadata,
+    Column("token", String(255), primary_key=True),
+    Column("user_id", String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("expires_at", DateTime(timezone=True)),
+    Column("revoked_at", DateTime(timezone=True)),
+)
+Index("ix_sessions_user_id", sessions.c.user_id)
+Index("ix_sessions_expires_at", sessions.c.expires_at)
 
 user_preferences = Table(
     "user_preferences", Base.metadata,
@@ -106,11 +120,11 @@ model_versions = Table(
     UniqueConstraint("model_id", "version", name="uq_model_versions_model_version"),
 )
 
-file_objects = Table(
-    "file_objects", Base.metadata,
+files = Table(
+    "files", Base.metadata,
     id_column(),
     Column("tenant_id", String(36), ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False),
-    Column("owner_id", String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
+    Column("user_id", String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
     Column("file_name", String(500), nullable=False),
     Column("declared_mime_type", String(255), nullable=False),
     Column("actual_mime_type", String(255)),
@@ -120,16 +134,19 @@ file_objects = Table(
     Column("page_count", Integer),
     Column("status", String(32), nullable=False, server_default="uploading"),
     Column("failure_reason", Text),
+    Column("actual_size_bytes", BigInteger),
+    Column("width_px", Integer),
+    Column("height_px", Integer),
     Column("deleted_at", DateTime(timezone=True)),
     *timestamps(),
     CheckConstraint("size_bytes >= 0", name="ck_file_objects_size"),
 )
-Index("ix_file_objects_tenant_owner_created", file_objects.c.tenant_id, file_objects.c.owner_id, file_objects.c.created_at)
+Index("ix_files_tenant_user_created", files.c.tenant_id, files.c.user_id, files.c.created_at)
 
 document_pages = Table(
     "document_pages", Base.metadata,
     id_column(),
-    Column("file_id", String(36), ForeignKey("file_objects.id", ondelete="CASCADE"), nullable=False),
+    Column("file_id", String(36), ForeignKey("files.id", ondelete="CASCADE"), nullable=False),
     Column("page_no", Integer, nullable=False),
     Column("image_object_key", Text, nullable=False),
     Column("thumbnail_object_key", Text),
@@ -147,9 +164,14 @@ ocr_jobs = Table(
     "ocr_jobs", Base.metadata,
     id_column(),
     Column("tenant_id", String(36), ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False),
-    Column("created_by", String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
-    Column("file_id", String(36), ForeignKey("file_objects.id", ondelete="RESTRICT"), nullable=False),
-    Column("model_version_id", String(36), ForeignKey("model_versions.id", ondelete="RESTRICT"), nullable=False),
+    Column("user_id", String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
+    Column("file_id", String(36), ForeignKey("files.id", ondelete="RESTRICT"), nullable=False),
+    Column("model_version_id", String(36), ForeignKey("model_versions.id", ondelete="RESTRICT")),
+    Column("file_name", String(500), nullable=False),
+    Column("model_id", String(100), nullable=False),
+    Column("model_version", String(100), nullable=False),
+    Column("page_ids", JSON_VALUE, nullable=False, server_default="[]"),
+    Column("review_count", Integer, nullable=False, server_default="0"),
     Column("name", String(500), nullable=False),
     Column("options_snapshot", JSON_VALUE, nullable=False, server_default="{}"),
     Column("status", String(32), nullable=False, server_default="queued"),
@@ -170,7 +192,7 @@ ocr_jobs = Table(
     CheckConstraint("progress BETWEEN 0 AND 100", name="ck_ocr_jobs_progress"),
 )
 Index("ix_ocr_jobs_tenant_status_created", ocr_jobs.c.tenant_id, ocr_jobs.c.status, ocr_jobs.c.created_at)
-Index("ix_ocr_jobs_creator_created", ocr_jobs.c.created_by, ocr_jobs.c.created_at)
+Index("ix_ocr_jobs_user_created", ocr_jobs.c.user_id, ocr_jobs.c.created_at)
 
 job_pages = Table(
     "job_pages", Base.metadata,
@@ -189,10 +211,32 @@ job_pages = Table(
     UniqueConstraint("job_id", "page_id", name="uq_job_pages_job_page"),
 )
 
-ocr_results = Table(
-    "ocr_results", Base.metadata,
+pages = Table(
+    "pages", Base.metadata,
     id_column(),
-    Column("job_page_id", String(36), ForeignKey("job_pages.id", ondelete="CASCADE"), nullable=False),
+    Column("job_id", String(36), ForeignKey("ocr_jobs.id", ondelete="CASCADE"), nullable=False),
+    Column("page_no", Integer, nullable=False),
+    Column("label", String(100), nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("image", JSON_VALUE, nullable=False, server_default="{}"),
+    Column("result_ids", JSON_VALUE, nullable=False, server_default="[]"),
+    Column("result_count", Integer, nullable=False, server_default="0"),
+    Column("review_count", Integer, nullable=False, server_default="0"),
+    Column("processing_ms", Integer),
+    Column("error", JSON_VALUE),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    UniqueConstraint("job_id", "page_no", name="uq_pages_job_page_no"),
+)
+Index("ix_pages_job_page_no", pages.c.job_id, pages.c.page_no)
+
+results = Table(
+    "results", Base.metadata,
+    id_column(),
+    Column("job_page_id", String(36), ForeignKey("job_pages.id", ondelete="CASCADE")),
+    Column("job_id", String(36), ForeignKey("ocr_jobs.id", ondelete="CASCADE"), nullable=False),
+    Column("page_id", String(36), ForeignKey("pages.id", ondelete="CASCADE"), nullable=False),
+    Column("page_no", Integer, nullable=False),
+    Column("type", String(32), nullable=False, server_default="text_line"),
     Column("text", Text, nullable=False),
     Column("confidence", Float, nullable=False),
     Column("bbox_x1", Float, nullable=False),
@@ -200,46 +244,48 @@ ocr_results = Table(
     Column("bbox_x2", Float, nullable=False),
     Column("bbox_y2", Float, nullable=False),
     Column("polygon", JSON_VALUE),
+    Column("bbox", JSON_VALUE, nullable=False),
     Column("angle", Float),
     Column("reading_order", Integer, nullable=False),
     Column("attributes", JSON_VALUE, nullable=False, server_default="{}"),
     Column("current_revision", Integer, nullable=False, server_default="0"),
+    Column("current_correction", JSON_VALUE),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     CheckConstraint("confidence BETWEEN 0 AND 1", name="ck_ocr_results_confidence"),
     CheckConstraint("bbox_x2 >= bbox_x1 AND bbox_y2 >= bbox_y1", name="ck_ocr_results_bbox"),
 )
-Index("ix_ocr_results_page_order", ocr_results.c.job_page_id, ocr_results.c.reading_order)
+Index("ix_results_page_order", results.c.page_id, results.c.reading_order)
 
-ocr_corrections = Table(
-    "ocr_corrections", Base.metadata,
+corrections = Table(
+    "corrections", Base.metadata,
     id_column(),
-    Column("result_id", String(36), ForeignKey("ocr_results.id", ondelete="CASCADE"), nullable=False),
+    Column("result_id", String(36), ForeignKey("results.id", ondelete="CASCADE"), nullable=False),
     Column("revision", Integer, nullable=False),
     Column("base_revision", Integer, nullable=False),
     Column("corrected_text", Text, nullable=False),
-    Column("created_by", String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
-    Column("reverts_correction_id", String(36), ForeignKey("ocr_corrections.id", ondelete="SET NULL")),
+    Column("user_id", String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
+    Column("reverts_correction_id", String(36), ForeignKey("corrections.id", ondelete="SET NULL")),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     UniqueConstraint("result_id", "revision", name="uq_ocr_corrections_result_revision"),
 )
-Index("ix_ocr_corrections_result_created", ocr_corrections.c.result_id, ocr_corrections.c.created_at)
+Index("ix_corrections_result_created", corrections.c.result_id, corrections.c.created_at)
 
-ocr_comments = Table(
-    "ocr_comments", Base.metadata,
+comments = Table(
+    "comments", Base.metadata,
     id_column(),
-    Column("result_id", String(36), ForeignKey("ocr_results.id", ondelete="CASCADE"), nullable=False),
+    Column("result_id", String(36), ForeignKey("results.id", ondelete="CASCADE"), nullable=False),
     Column("content", Text, nullable=False),
-    Column("created_by", String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
+    Column("user_id", String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
     Column("deleted_at", DateTime(timezone=True)),
     *timestamps(),
 )
-Index("ix_ocr_comments_result_created", ocr_comments.c.result_id, ocr_comments.c.created_at)
+Index("ix_comments_result_created", comments.c.result_id, comments.c.created_at)
 
-export_jobs = Table(
-    "export_jobs", Base.metadata,
+exports = Table(
+    "exports", Base.metadata,
     id_column(),
     Column("job_id", String(36), ForeignKey("ocr_jobs.id", ondelete="CASCADE"), nullable=False),
-    Column("created_by", String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
+    Column("user_id", String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
     Column("format", String(20), nullable=False),
     Column("mode", String(32), nullable=False),
     Column("scope", String(32), nullable=False),
@@ -249,12 +295,13 @@ export_jobs = Table(
     Column("error_code", String(100)),
     Column("error_message", Text),
     Column("finished_at", DateTime(timezone=True)),
+    Column("download_url", Text),
     *timestamps(),
 )
-Index("ix_export_jobs_job_created", export_jobs.c.job_id, export_jobs.c.created_at)
+Index("ix_exports_job_created", exports.c.job_id, exports.c.created_at)
 
-idempotency_keys = Table(
-    "idempotency_keys", Base.metadata,
+idempotency_records = Table(
+    "idempotency_records", Base.metadata,
     id_column(),
     Column("user_id", String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
     Column("route", String(500), nullable=False),
@@ -266,7 +313,7 @@ idempotency_keys = Table(
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     UniqueConstraint("user_id", "route", "key", name="uq_idempotency_user_route_key"),
 )
-Index("ix_idempotency_expires_at", idempotency_keys.c.expires_at)
+Index("ix_idempotency_records_expires_at", idempotency_records.c.expires_at)
 
 audit_logs = Table(
     "audit_logs", Base.metadata,
