@@ -178,7 +178,7 @@ def test_upload_job_and_results(tmp_path: Path) -> None:
 
     pages_response = test_client.get(f"/api/v1/ocr/jobs/{job_id}/pages", headers=headers)
     image = pages_response.json()["data"]["items"][0]["image"]
-    assert image["url"] == f"/api/v1/files/{job['file_id']}/content"
+    assert image["url"] == f"/files/{job['file_id']}/content"
     assert image["width_px"] == 1200
     assert image["height_px"] == 1600
 

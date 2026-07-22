@@ -220,7 +220,6 @@ async function loadProtectedImage(url: string | null) {
   if (!url) return undefined
 
   const requestUrl = url.replace(/^\/api\/v1/, '')
-  console.log('[loadProtectedImage] 实际请求 URL:', requestUrl)
 
   const response = await apiClient.get<Blob>(requestUrl, {
     responseType: 'blob',

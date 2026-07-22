@@ -399,7 +399,7 @@ class MockOcrService:
         content_path = self.content_path(uploaded_file)
         is_image = uploaded_file.get("media_type", "").startswith("image/")
         image_url = (
-            f"/api/v1/files/{uploaded_file['id']}/content"
+            f"/files/{uploaded_file['id']}/content"
             if is_image and content_path.exists()
             else None
         )

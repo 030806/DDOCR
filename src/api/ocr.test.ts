@@ -120,6 +120,9 @@ describe('OCR API adapters', () => {
       sourceHeight: 1080,
     })
     expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob))
+    expect(apiClient.get).toHaveBeenCalledWith('/files/file-1/content', {
+      responseType: 'blob',
+    })
   })
 
   it('creates, updates, and deletes comments with the server author', async () => {
