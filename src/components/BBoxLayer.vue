@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, shallowRef, watch } from 'vue'
-import type { MockPage } from '../mock'
+import type { OcrPage } from '../types/ocr'
 
 const props = defineProps<{
-  page: MockPage
+  page: OcrPage
   selectedId: string
   zoom: number
 }>()
@@ -43,11 +43,11 @@ function displayY(value: number) {
   return imageTransform.value.y + value * imageTransform.value.scale
 }
 
-function displayWidth(item: MockPage['items'][number]) {
+function displayWidth(item: OcrPage['items'][number]) {
   return (item.bbox[2] - item.bbox[0]) * imageTransform.value.scale
 }
 
-function displayHeight(item: MockPage['items'][number]) {
+function displayHeight(item: OcrPage['items'][number]) {
   return (item.bbox[3] - item.bbox[1]) * imageTransform.value.scale
 }
 

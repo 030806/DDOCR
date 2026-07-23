@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { CommentOutlined, EditOutlined } from '@ant-design/icons-vue'
-import type { OcrItem } from '../mock'
+import type { OcrItem } from '../types/ocr'
 import { getFinalOcrText, getLayoutCanvasHeight, mapBboxToRelative, OCR_DOCUMENT_HEIGHT, OCR_DOCUMENT_WIDTH } from '../ocrLayout'
 
 defineProps<{

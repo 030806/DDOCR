@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { CheckCircleFilled, FileTextOutlined, LeftOutlined, RightOutlined, ZoomInOutlined, ZoomOutOutlined } from '@ant-design/icons-vue'
-import type { MockPage } from '../mock'
+import type { OcrPage } from '../types/ocr'
 import BBoxLayer from './BBoxLayer.vue'
 
 defineProps<{
-  pages: MockPage[]
-  page: MockPage
+  pages: OcrPage[]
+  page: OcrPage
   currentPage: number
   selectedId: string
   zoom: number

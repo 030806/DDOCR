@@ -1,33 +1,12 @@
-export type OcrItem = {
-  id: string
-  text: string
-  score: number
-  bbox: [number, number, number, number]
-  revision?: number
-  corrected?: string
-  comments: { id: string; authorId?: string; author: string; content: string; time: string; updatedAt?: string | null }[]
-}
+import type { ModelOption, OcrItem, OcrPage } from './types/ocr'
 
-export type MockPage = {
-  no: number
-  label: string
-  items: OcrItem[]
-  imageUrl?: string
-  sourceWidth?: number
-  sourceHeight?: number
-}
-
-export type ModelOption = {
-  value: string
-  label: string
-  note: string
-  speed: string
-}
+export type { ModelOption, OcrItem }
+export type MockPage = OcrPage
 
 export const models: ModelOption[] = [
-  { value: 'general-v4', label: '通用文字检测 · V4', note: '中英文 / 印刷体', speed: '38 ms/页' },
-  { value: 'steel-v2', label: '钢材铭牌专用 · V2', note: '低对比度 / 喷码', speed: '52 ms/页' },
-  { value: 'invoice-v3', label: '工业票据识别 · V3', note: '表格 / 数字增强', speed: '64 ms/页' },
+  { value: 'general-v4', version: '4', label: '通用文字检测 · V4', note: '中英文 / 印刷体', speed: '38 ms/页' },
+  { value: 'steel-v2', version: '2', label: '钢材铭牌专用 · V2', note: '低对比度 / 喷码', speed: '52 ms/页' },
+  { value: 'invoice-v3', version: '3', label: '工业票据识别 · V3', note: '表格 / 数字增强', speed: '64 ms/页' },
 ]
 
 export const pages: MockPage[] = [

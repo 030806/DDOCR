@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import type { OcrItem } from '../mock'
+import type { OcrItem } from '../types/ocr'
 
 const props = defineProps<{ open: boolean; item?: OcrItem; currentUserId?: string; saving?: boolean }>()
 const emit = defineEmits<{

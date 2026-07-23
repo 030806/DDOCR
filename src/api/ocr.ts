@@ -1,4 +1,4 @@
-import type { MockPage, OcrItem } from '../mock'
+import type { ModelOption, OcrItem, OcrPage } from '../types/ocr'
 import type { OcrTask, TaskStatus } from '../types/task'
 import { apiClient } from './client'
 
@@ -74,6 +74,14 @@ type ApiCreatedJob = {
   created_at: string
 }
 
+type ApiModel = {
+  id: string
+  name: string
+  default_version: string
+  note: string
+  estimated_ms_per_page: number
+}
+
 export type UploadProgressStage = 'session' | 'content' | 'complete' | 'job'
 
 // 将后端任务状态映射为前端统一的任务状态。
@@ -100,6 +108,7 @@ export function mapApiJob(job: ApiJob): OcrTask {
     fileType: fileType(job.file_name),
     createdAt: job.created_at,
     modelId: job.model_id,
+    modelVersion: job.model_version,
     modelName: `${job.model_id} · ${job.model_version}`,
     pageCount: job.page_count,
     status: taskStatus(job.status, job.review_count),
@@ -193,7 +202,7 @@ export async function getTask(taskId: string): Promise<OcrTask> {
 }
 
 // 获取任务对应的所有页面及其 OCR 结果。
-export async function getOcrPages(taskId: string): Promise<MockPage[]> {
+export async function getOcrPages(taskId: string): Promise<OcrPage[]> {
   const pagesResponse = await apiClient.get<ApiEnvelope<{ items: ApiPage[] }>>(`/ocr/jobs/${taskId}/pages`)
 
   return Promise.all(
@@ -229,7 +238,7 @@ async function loadProtectedImage(url: string | null) {
 }
 
 // 释放页面图片占用的 blob URL，避免内存泄漏。
-export function releasePageImages(pages: MockPage[]) {
+export function releasePageImages(pages: OcrPage[]) {
   for (const page of pages) {
     if (page.imageUrl?.startsWith('blob:')) URL.revokeObjectURL(page.imageUrl)
   }
@@ -238,6 +247,7 @@ export function releasePageImages(pages: MockPage[]) {
 // 上传文件并创建 OCR 任务，包含阶段性进度回调。
 export async function uploadAndCreateOcrTask(
   file: File,
+  model: Pick<ModelOption, 'value' | 'version'>,
   onStage?: (stage: UploadProgressStage, progress: number) => void,
 ): Promise<string> {
   onStage?.('session', 10)
@@ -268,16 +278,28 @@ export async function uploadAndCreateOcrTask(
   await apiClient.post(`/files/${session.file_id}/complete`)
 
   onStage?.('job', 90)
-  // TODO(integration): Fetch the model catalog from /models and submit the selected
-  // backend model/version. The current Mock Backend accepts only mock@1.0.0.
   const jobResponse = await apiClient.post<ApiEnvelope<ApiCreatedJob>>('/ocr/jobs', {
     name: file.name.replace(/\.[^.]+$/, '') || file.name,
     file_id: session.file_id,
-    model_id: 'mock',
-    model_version: '1.0.0',
+    model_id: model.value,
+    model_version: model.version,
     options: {},
   })
 
   onStage?.('job', 100)
   return jobResponse.data.data.id
+}
+
+export async function getModels(): Promise<ModelOption[]> {
+  const response = await apiClient.get<ApiEnvelope<{ items: ApiModel[] }>>('/models', {
+    params: { status: 'available' },
+  })
+
+  return response.data.data.items.map((model) => ({
+    value: model.id,
+    version: model.default_version,
+    label: `${model.name} · ${model.default_version}`,
+    note: model.note,
+    speed: `${model.estimated_ms_per_page} ms/页`,
+  }))
 }

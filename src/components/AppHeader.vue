@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { HistoryOutlined, SettingOutlined } from '@ant-design/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
-import { findMockTask } from '../mock/tasks'
+import { getTask } from '../api/ocr'
 import UserMenu from './UserMenu.vue'
 
 const emit = defineEmits<{ openSettings: [] }>()
@@ -10,10 +10,23 @@ const emit = defineEmits<{ openSettings: [] }>()
 const route = useRoute()
 const router = useRouter()
 const isTasksPage = computed(() => route.name === 'tasks')
-// TODO(integration): Resolve the active FastAPI task name from shared task state;
-// route ids created by the backend are not present in mock/tasks.ts.
-const routeTask = computed(() => typeof route.params.taskId === 'string' ? findMockTask(route.params.taskId) : undefined)
-const workspaceFile = computed(() => routeTask.value?.fileName || 'QC_Report_0714.pdf')
+const workspaceFile = ref('暂无任务')
+let taskLoadSequence = 0
+
+watch(() => route.params.taskId, async (taskId) => {
+  const sequence = ++taskLoadSequence
+  if (typeof taskId !== 'string') {
+    workspaceFile.value = '暂无任务'
+    return
+  }
+  workspaceFile.value = '正在加载…'
+  try {
+    const task = await getTask(taskId)
+    if (sequence === taskLoadSequence) workspaceFile.value = task.fileName
+  } catch {
+    if (sequence === taskLoadSequence) workspaceFile.value = '任务加载失败'
+  }
+}, { immediate: true })
 </script>
 
 <template>

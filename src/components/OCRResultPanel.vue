@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { CheckCircleFilled, CommentOutlined, EditOutlined, SearchOutlined } from '@ant-design/icons-vue'
-import type { MockPage, OcrItem } from '../mock'
+import type { OcrItem, OcrPage } from '../types/ocr'
 import type { ExportMode } from '../exportResults'
 import type { ResultViewMode } from '../ocrLayout'
 import OcrLayoutView from './OcrLayoutView.vue'
 
 const props = defineProps<{
-  page: MockPage
-  pages: MockPage[]
+  page: OcrPage
+  pages: OcrPage[]
   selectedId: string
   modelLabel: string
   viewMode: ResultViewMode
@@ -101,6 +101,6 @@ function handleExportSelect({ key }: { key: string | number }) {
       @correct="emit('correct', $event)"
       @comment="emit('comment', $event)"
     />
-    <footer class="results-footer"><span><CheckCircleFilled /> 已完成 · Mock 数据</span><span>模型 {{ modelLabel.split('·')[1] }}</span></footer>
+    <footer class="results-footer"><span><CheckCircleFilled /> 已从服务器加载</span><span>模型 {{ modelLabel }}</span></footer>
   </aside>
 </template>

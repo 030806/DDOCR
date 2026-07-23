@@ -7,6 +7,7 @@ export type OcrTask = {
   fileType: 'PDF' | 'PNG' | 'JPG'
   createdAt: string
   modelId: string
+  modelVersion?: string
   modelName: string
   pageCount: number
   status: TaskStatus

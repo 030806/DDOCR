@@ -1,4 +1,4 @@
-import type { OcrItem } from './mock'
+import type { OcrItem } from './types/ocr'
 
 export type ResultViewMode = 'list' | 'layout'
 

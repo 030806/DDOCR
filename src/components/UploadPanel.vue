@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { CheckCircleFilled, CloudUploadOutlined, SearchOutlined } from '@ant-design/icons-vue'
 import { ref } from 'vue'
-import type { ModelOption } from '../mock'
+import type { ModelOption } from '../types/ocr'
 
 defineProps<{
   models: ModelOption[]
   selectedModel: string
-  currentModel: ModelOption
+  currentModel?: ModelOption
   jobState: 'ready' | 'running' | 'done'
   progress: number
   fileName: string
@@ -50,9 +50,9 @@ function handleFileChange(event: Event) {
         :options="models.map(model => ({ value: model.value, label: model.label }))"
         @update:value="emit('update:selectedModel', $event)"
       />
-      <span class="model-note">{{ currentModel.note }} <i></i> {{ currentModel.speed }}</span>
+      <span v-if="currentModel" class="model-note">{{ currentModel.note }} <i></i> {{ currentModel.speed }}</span>
     </div>
-    <button class="run-btn" :class="{ running: jobState === 'running' }" @click="emit('run')">
+    <button class="run-btn" :class="{ running: jobState === 'running' }" :disabled="!currentModel" @click="emit('run')">
       <span v-if="jobState === 'running'" class="spinner"></span>
       <CheckCircleFilled v-else-if="jobState === 'done'" />
       <SearchOutlined v-else />

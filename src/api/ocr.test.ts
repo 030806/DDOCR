@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apiClient } from './client'
-import { createComment, createCorrection, deleteComment, getOcrPages, mapApiJob, mapApiResult, updateComment, uploadAndCreateOcrTask } from './ocr'
+import { createComment, createCorrection, deleteComment, getModels, getOcrPages, mapApiJob, mapApiResult, updateComment, uploadAndCreateOcrTask } from './ocr'
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
@@ -57,6 +57,7 @@ describe('OCR API adapters', () => {
 
     const taskId = await uploadAndCreateOcrTask(
       new File(['image'], 'terminal.png', { type: 'image/png' }),
+      { value: 'mock', version: '1.0.0' },
       (_stage, progress) => stages.push(progress),
     )
 
@@ -79,6 +80,26 @@ describe('OCR API adapters', () => {
       model_version: '1.0.0',
     }))
     expect(stages[stages.length - 1]).toBe(100)
+  })
+
+  it('loads the available model catalog from the API', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      data: {
+        data: {
+          items: [{
+            id: 'mock', name: 'Mock OCR', default_version: '1.0.0',
+            note: '服务器模型', estimated_ms_per_page: 20,
+          }],
+        },
+        request_id: 'req-models',
+      },
+    })
+
+    await expect(getModels()).resolves.toEqual([{
+      value: 'mock', version: '1.0.0', label: 'Mock OCR · 1.0.0',
+      note: '服务器模型', speed: '20 ms/页',
+    }])
+    expect(apiClient.get).toHaveBeenCalledWith('/models', { params: { status: 'available' } })
   })
 
   it('keeps the uploaded image URL and dimensions on API pages', async () => {

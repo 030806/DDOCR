@@ -76,3 +76,12 @@ retryJob()
 - 每完成一个真实 API，将对应数据源切换到 `src/api`，不重写现有 UI。
 - 真实任务按路由 ID 加载，禁止继续使用全局共享结果数组。
 - 接口接入完成后保留 Mock 作为开发演示/测试 fixture，而非生产回退数据源。
+
+## 7. 工作台真实数据初始化
+
+- `/workspace` 始终以空页面集、空结果选中状态启动，不从 `mock.ts` 注入默认页面、OCR 结果或文件信息。
+- `/workspace/:taskId` 通过 `GET /ocr/jobs/{job_id}`、`GET /ocr/jobs/{job_id}/pages` 及分页结果接口加载真实任务。
+- 页面图像继续通过鉴权 HTTP 请求转换为 Blob URL，离开任务时释放。
+- 上传区通过 `GET /models` 读取可用模型，创建任务时提交服务器返回的 `model_id` 和 `model_version`。
+- 任务加载失败时回到空工作台，不使用 Mock 数据降级。
+- `mock.ts` 保留供后续统一清理，不再是工作台运行时数据源。

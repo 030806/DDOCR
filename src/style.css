@@ -28,6 +28,11 @@ button { font: inherit; }
 .run-btn { min-width: 142px; height: 42px; border: 0; border-radius: 7px; color: white; background: #168b6c; font-weight: 600; cursor: pointer; box-shadow: 0 5px 14px rgba(22,139,108,.2); }.run-btn:hover { background: #10785d; }.run-btn.running { background: #315d50; }
 .spinner { display: inline-block; width: 13px; height: 13px; margin-right: 7px; border: 2px solid rgba(255,255,255,.3); border-top-color: white; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; } @keyframes spin { to { transform: rotate(360deg); } }
 .workspace { flex: 1; min-height: 0; overflow: hidden; }
+.workspace-empty { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #7c8984; background: #f6f9f8; }
+.workspace-empty > .anticon { margin-bottom: 18px; color: #9aaba5; font-size: 52px; }
+.workspace-empty h2 { margin: 0 0 8px; color: #263a33; font-size: 20px; }
+.workspace-empty p { margin: 0 0 20px; font-size: 13px; }
+.workspace-empty button { height: 36px; padding: 0 16px; border: 1px solid #168b6c; border-radius: 6px; background: #fff; color: #168b6c; cursor: pointer; }
 .workspace.splitpanes--vertical > .splitpanes__pane { min-width: 0; transition: none; }
 .workspace.splitpanes--vertical > .splitpanes__splitter { position: relative; z-index: 4; flex: 0 0 1px; width: 1px; min-width: 1px; border: 0; background: #d6ddda; cursor: col-resize; }
 .workspace.splitpanes--vertical > .splitpanes__splitter::before { content: ""; position: absolute; top: 0; bottom: 0; left: -4px; width: 9px; background: transparent; transition: background .14s ease; }
