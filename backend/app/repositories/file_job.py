@@ -46,6 +46,7 @@ def _job_dict(row: Any) -> dict[str, Any]:
         "id": m["id"], "owner_id": m["user_id"], "name": m["name"],
         "file_id": m["file_id"], "file_name": m["file_name"],
         "model_id": m["model_id"], "model_version": m["model_version"],
+        "options": dict(m["options_snapshot"] or {}),
         "status": m["status"], "stage": m["stage"], "progress": m["progress"],
         "created_at": _api_time(m["created_at"]), "started_at": _api_time(m["started_at"]),
         "finished_at": _api_time(m["finished_at"]), "page_ids": m["page_ids"] or [],
@@ -103,6 +104,7 @@ class OCRJobRepository:
                 id=item["id"], tenant_id=tenant_id, user_id=item["owner_id"],
                 file_id=item["file_id"], file_name=item["file_name"], name=item["name"],
                 model_id=item["model_id"], model_version=item["model_version"],
+                options_snapshot=item.get("options", {}),
                 page_ids=item["page_ids"], status=item["status"], stage=item["stage"],
                 progress=item["progress"], page_total=item["page_count"],
                 page_succeeded=item["completed_pages"], page_failed=item["failed_pages"],
@@ -120,3 +122,24 @@ class OCRJobRepository:
     def all(self) -> list[dict[str, Any]]:
         with Session(self.engine) as db:
             return [_job_dict(row) for row in db.execute(select(ocr_jobs)).all()]
+
+    def update_state(self, job_id: str, **values: Any) -> dict[str, Any]:
+        mapping = {
+            "completed_pages": "page_succeeded", "failed_pages": "page_failed",
+        }
+        permitted = {
+            "status", "stage", "progress", "started_at", "finished_at",
+            "result_count", "review_count", "completed_pages", "failed_pages",
+            "error_code", "error_message",
+        }
+        update_values = {
+            mapping.get(key, key): _db_time(value) if key in {"started_at", "finished_at"} else value
+            for key, value in values.items() if key in permitted
+        }
+        update_values["updated_at"] = datetime.now(UTC)
+        with Session(self.engine) as db, db.begin():
+            db.execute(update(ocr_jobs).where(ocr_jobs.c.id == job_id).values(**update_values))
+        item = self.get(job_id)
+        if item is None:
+            raise KeyError(f"OCR job not found: {job_id}")
+        return item

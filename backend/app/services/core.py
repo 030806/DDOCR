@@ -2,13 +2,16 @@ import hashlib
 import hmac
 import secrets
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import HTTPException
 from openpyxl import Workbook
 from PIL import Image, UnidentifiedImageError
 
 from app.models.store import Store
+from app.ocr.adapter import OcrAdapter
+from app.ocr.contracts import OcrAdapterProtocol
+from app.ocr.engine import TerminalOcrEngine
 from app.repositories.auth import SessionRepository, TenantRepository, UserRepository
 from app.repositories.correction_comment import CommentRepository, CorrectionRepository
 from app.repositories.file_job import FileRepository, OCRJobRepository
@@ -26,8 +29,19 @@ MAX_FILE_SIZE_BYTES = 104_857_600
 
 
 class MockOcrService:
-    def __init__(self, store: Store) -> None:
+    def __init__(
+        self,
+        store: Store,
+        ocr_adapter: OcrAdapterProtocol | None = None,
+        job_submitter: Callable[[str], object] | None = None,
+    ) -> None:
         self.store = store
+        self.ocr_adapter: OcrAdapterProtocol = (
+            ocr_adapter
+            if ocr_adapter is not None
+            else OcrAdapter(TerminalOcrEngine())
+        )
+        self.job_submitter = job_submitter
         self.tenants = TenantRepository(store.engine)
         self.users = UserRepository(store.engine)
         self.sessions = SessionRepository(store.engine)
@@ -261,15 +275,6 @@ class MockOcrService:
         job_id = uid()
         page_id = uid()
         created_at = now()
-        # TODO(integration): Replace fixed results with the real OCR adapter. The
-        # API response contract and bbox format should remain unchanged.
-        mock_results = [
-            ("XT-101", 0.98, [180, 240, 520, 320]),
-            ("QF10I", 0.884, [620, 240, 940, 320]),
-            ("24V DC", 0.96, [180, 410, 520, 490]),
-        ]
-        result_ids = [uid() for _ in mock_results]
-
         job = {
             "id": job_id,
             "owner_id": owner_id,
@@ -278,65 +283,32 @@ class MockOcrService:
             "file_name": uploaded_file["file_name"],
             "model_id": body.model_id,
             "model_version": body.model_version,
-            "status": "succeeded",
-            "stage": "completed",
-            "progress": 100,
+            "status": "queued", "stage": "queued", "progress": 0,
             "created_at": created_at,
-            "started_at": created_at,
-            "finished_at": now(),
+            "started_at": None, "finished_at": None,
             "page_ids": [page_id],
             "page_count": 1,
-            "completed_pages": 1,
+            "completed_pages": 0,
             "failed_pages": 0,
-            "result_count": len(mock_results),
-            "review_count": 1,
+            "result_count": 0, "review_count": 0,
+            "options": body.options,
             "deleted": False,
         }
         self.jobs.create(job)
         page = self._build_page(
             job_id,
             page_id,
-            result_ids,
+            [],
             uploaded_file.get("width_px", 1200),
             uploaded_file.get("height_px", 1600),
+            status="queued", review_count=0, processing_ms=0, roi_errors={},
         )
         self.page_repository.create(page)
-        self._create_mock_results(job_id, page_id, result_ids, mock_results)
+        if self.job_submitter is None:
+            raise HTTPException(503, "OCR worker is not available")
+        self.job_submitter(job_id)
         response_fields = ("id", "status", "stage", "progress", "created_at")
         return {field: job[field] for field in response_fields}
-
-    def _create_mock_results(
-        self,
-        job_id: str,
-        page_id: str,
-        result_ids: list[str],
-        mock_results: list[tuple[str, float, list[int]]],
-    ) -> list[str]:
-        for reading_order, mock_result in enumerate(mock_results, 1):
-            text, confidence, bbox = mock_result
-            result_id = result_ids[reading_order - 1]
-            polygon = [
-                [bbox[0], bbox[1]],
-                [bbox[2], bbox[1]],
-                [bbox[2], bbox[3]],
-                [bbox[0], bbox[3]],
-            ]
-            result = {
-                "id": result_id,
-                "job_id": job_id,
-                "page_id": page_id,
-                "page_no": 1,
-                "reading_order": reading_order,
-                "type": "text_line",
-                "text": text,
-                "confidence": confidence,
-                "bbox": bbox,
-                "polygon": polygon,
-                "revision": 0,
-                "current_correction": None,
-            }
-            self.result_repository.create(result)
-        return result_ids
 
     @staticmethod
     def _build_page(
@@ -345,13 +317,18 @@ class MockOcrService:
         result_ids: list[str],
         width_px: int,
         height_px: int,
+        *,
+        status: str,
+        review_count: int,
+        processing_ms: int,
+        roi_errors: dict[str, str],
     ) -> dict[str, Any]:
         return {
             "id": page_id,
             "job_id": job_id,
             "page_no": 1,
             "label": "第 1 页",
-            "status": "succeeded",
+            "status": status,
             "image": {
                 "url": None,
                 "thumbnail_url": None,
@@ -362,9 +339,13 @@ class MockOcrService:
             },
             "result_ids": result_ids,
             "result_count": len(result_ids),
-            "review_count": 1,
-            "processing_ms": 20,
-            "error": None,
+            "review_count": review_count,
+            "processing_ms": processing_ms,
+            "error": (
+                {"code": "OCR_PARTIAL_FAILURE", "roi_errors": roi_errors}
+                if roi_errors
+                else None
+            ),
         }
 
     def job(

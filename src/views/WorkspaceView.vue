@@ -7,7 +7,7 @@ import { Pane, Splitpanes } from 'splitpanes'
 import 'splitpanes/dist/splitpanes.css'
 import { useRoute, useRouter } from 'vue-router'
 import type { ModelOption, OcrItem, OcrPage } from '../types/ocr'
-import { createComment, createCorrection, deleteComment, getModels, getOcrPages, getTask, releasePageImages, updateComment, uploadAndCreateOcrTask } from '../api/ocr'
+import { createComment, createCorrection, deleteComment, getModels, getOcrPages, releasePageImages, updateComment, uploadAndCreateOcrTask } from '../api/ocr'
 import { createSplitLayout } from '../splitLayout'
 import { exportOcrResults, type ExportMode } from '../exportResults'
 import type { ResultViewMode } from '../ocrLayout'
@@ -16,8 +16,10 @@ import DocumentViewer from '../components/DocumentViewer.vue'
 import OCRResultPanel from '../components/OCRResultPanel.vue'
 import CorrectionModal from '../components/CorrectionModal.vue'
 import CommentDrawer from '../components/CommentDrawer.vue'
+import OcrProgressCard from '../components/OcrProgressCard.vue'
 import { useAppSettings } from '../composables/useAppSettings'
 import { useAuth } from '../composables/useAuth'
+import { useOcrJobPolling } from '../composables/useOcrJobPolling'
 import { createEmptyWorkspaceContent } from '../workspaceState'
 
 type JobState = 'ready' | 'running' | 'done'
@@ -45,6 +47,7 @@ const pages = ref<OcrPage[]>(initialContent.pages)
 const selectedFile = ref<File>()
 let workspaceObserver: ResizeObserver | undefined
 let taskLoadSequence = 0
+const { task: polledTask, requestError: pollingError, elapsedMs, start: startPolling, stop: stopPolling, reset: resetPolling } = useOcrJobPolling()
 
 const page = computed(() => pages.value[currentPage.value - 1])
 const selectedItem = computed(() => pages.value.flatMap((ocrPage) => ocrPage.items).find((item) => item.id === selectedId.value))
@@ -82,16 +85,78 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  stopPolling()
   workspaceObserver?.disconnect()
   releasePageImages(pages.value)
 })
 
-watch(() => route.params.taskId, async (taskId) => {
-  const sequence = ++taskLoadSequence
-  if (typeof taskId !== 'string') {
+function ensureTaskModel(task: NonNullable<typeof polledTask.value>): void {
+  if (!availableModels.value.some((model) => model.value === task.modelId)) {
+    availableModels.value.push({ value: task.modelId, version: task.modelVersion || '', label: task.modelName, note: '', speed: '' })
+  }
+  selectedModel.value = task.modelId
+}
+
+async function loadCompletedTask(task: NonNullable<typeof polledTask.value>, sequence: number): Promise<void> {
+  taskLoading.value = true
+  try {
+    const taskPages = await getOcrPages(task.id)
+    if (sequence !== taskLoadSequence) { releasePageImages(taskPages); return }
+    releasePageImages(pages.value)
+    pages.value = taskPages
+    ensureTaskModel(task)
+    currentPage.value = 1
+    const candidates = taskPages[0]?.items || []
+    const reviewItem = route.query.action === 'review' ? candidates.find((item) => item.score < 0.95) : undefined
+    selectedId.value = (reviewItem || candidates[0])?.id || ''
+    jobState.value = 'done'
+    progress.value = 100
+    message.success(task.jobStatus === 'partial_success' ? `任务部分完成：${task.name}` : `识别完成：${task.name}`)
+  } catch {
+    if (sequence !== taskLoadSequence) return
     releasePageImages(pages.value)
     pages.value = []
     selectedId.value = ''
+    message.error('OCR 已完成，但页面结果加载失败，请重试。')
+  } finally {
+    if (sequence === taskLoadSequence) taskLoading.value = false
+  }
+}
+
+function pollTask(taskId: string, sequence: number): void {
+  startPolling(taskId, {
+    onUpdate(task) {
+      if (sequence !== taskLoadSequence) return
+      ensureTaskModel(task)
+      progress.value = task.progress || 0
+      jobState.value = 'running'
+      taskLoading.value = false
+    },
+    onSucceeded(task) {
+      if (sequence === taskLoadSequence) void loadCompletedTask(task, sequence)
+    },
+    onFailed() {
+      if (sequence !== taskLoadSequence) return
+      taskLoading.value = false
+      jobState.value = 'ready'
+    },
+  })
+}
+
+function retryTask(): void {
+  const taskId = route.params.taskId
+  if (typeof taskId !== 'string') return
+  taskLoading.value = true
+  pollTask(taskId, taskLoadSequence)
+}
+
+watch(() => route.params.taskId, (taskId) => {
+  const sequence = ++taskLoadSequence
+  resetPolling()
+  releasePageImages(pages.value)
+  pages.value = []
+  selectedId.value = ''
+  if (typeof taskId !== 'string') {
     selectedFile.value = undefined
     jobState.value = 'ready'
     progress.value = 0
@@ -99,41 +164,9 @@ watch(() => route.params.taskId, async (taskId) => {
     return
   }
   taskLoading.value = true
-  try {
-    const [task, taskPages] = await Promise.all([getTask(taskId), getOcrPages(taskId)])
-    if (sequence !== taskLoadSequence) {
-      releasePageImages(taskPages)
-      return
-    }
-    releasePageImages(pages.value)
-    pages.value = taskPages
-    if (!availableModels.value.some((model) => model.value === task.modelId)) {
-      availableModels.value.push({
-        value: task.modelId,
-        version: task.modelVersion || '',
-        label: task.modelName,
-        note: '',
-        speed: '',
-      })
-    }
-    selectedModel.value = task.modelId
-    currentPage.value = 1
-    const candidates = taskPages[0]?.items || []
-    const reviewItem = route.query.action === 'review' ? candidates.find((item) => item.score < 0.95) : undefined
-    selectedId.value = (reviewItem || candidates[0])?.id || ''
-    jobState.value = 'done'
-    progress.value = 100
-    message.success(route.query.action === 'review' ? `已继续复核：${task.name}` : `已加载任务：${task.name}`)
-  } catch {
-    if (sequence !== taskLoadSequence) return
-    releasePageImages(pages.value)
-    pages.value = []
-    selectedId.value = ''
-    message.warning('未找到对应任务，已返回空工作台')
-    router.replace('/workspace')
-  } finally {
-    if (sequence === taskLoadSequence) taskLoading.value = false
-  }
+  jobState.value = 'running'
+  progress.value = 0
+  pollTask(taskId, sequence)
 }, { immediate: true })
 
 watch([taskLoading, page], async ([loading, activePage]) => {
@@ -168,9 +201,9 @@ async function runOcr() {
     const taskId = await uploadAndCreateOcrTask(selectedFile.value, currentModel.value, (_stage, value) => {
       progress.value = value
     })
-    progress.value = 100
-    jobState.value = 'done'
-    message.success(`识别完成 · ${currentModel.value.label}`)
+    progress.value = 0
+    jobState.value = 'running'
+    message.success(`任务已提交 · ${currentModel.value.label}`)
     await router.push(`/workspace/${taskId}`)
   } catch {
     jobState.value = 'ready'
@@ -254,6 +287,7 @@ async function handleExport(mode: ExportMode) {
   <div class="workspace-view">
     <UploadPanel :models="availableModels" :selected-model="selectedModel" :current-model="currentModel" :job-state="jobState" :progress="progress" :file-name="selectedFileName" :file-meta="selectedFileMeta" @update:selected-model="selectedModel = $event" @upload="handleUpload" @run="runOcr" />
     <div v-if="taskLoading" class="workspace-empty"><a-spin size="large" /><p>正在加载任务数据…</p></div>
+    <OcrProgressCard v-else-if="polledTask && !['succeeded', 'partial_success'].includes(polledTask.jobStatus || 'queued')" :task="polledTask" :elapsed-ms="elapsedMs" :request-failed="Boolean(pollingError)" @retry="retryTask" />
     <Splitpanes v-else-if="page" ref="workspace" class="workspace">
       <Pane :size="splitLayout.documentSizePercent" :min-size="splitLayout.documentMinPercent">
         <div class="document-workspace">

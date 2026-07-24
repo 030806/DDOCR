@@ -8,10 +8,11 @@ from sqlalchemy import func, select
 from app.main import create_app
 from app.models.schema import files, ocr_jobs
 from app.models.store import StoredObject
+from tests.ocr_fakes import FakeOcrAdapter, wait_for_job
 
 
 def test_files_and_jobs_use_only_relational_tables(tmp_path: Path) -> None:
-    app = create_app(str(tmp_path), f"sqlite:///{(tmp_path / 'milestone3.db').as_posix()}")
+    app = create_app(str(tmp_path), f"sqlite:///{(tmp_path / 'milestone3.db').as_posix()}", FakeOcrAdapter())
     client = TestClient(app)
     registration = client.post("/api/v1/auth/register", json={
         "name": "文件用户", "phone": "13800137777",
@@ -33,6 +34,7 @@ def test_files_and_jobs_use_only_relational_tables(tmp_path: Path) -> None:
         "model_id": "mock", "model_version": "1.0.0",
     })
     assert job_response.status_code == 202
+    wait_for_job(client, job_response.json()["data"]["id"], headers)
 
     with app.state.service.store.engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(files)) == 1

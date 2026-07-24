@@ -6,11 +6,12 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from app.main import create_app
+from tests.ocr_fakes import FakeOcrAdapter, wait_for_job
 
 
 def client(tmp_path: Path) -> TestClient:
     database_url = f"sqlite:///{(tmp_path / 'test.db').as_posix()}"
-    app = create_app(str(tmp_path), database_url)
+    app = create_app(str(tmp_path), database_url, FakeOcrAdapter())
     return TestClient(app)
 
 
@@ -55,7 +56,9 @@ def workflow(test_client: TestClient) -> tuple[str, dict[str, str]]:
         },
     )
     assert job_response.status_code == 202
-    return job_response.json()["data"]["id"], headers
+    job_id = job_response.json()["data"]["id"]
+    wait_for_job(test_client, job_id, headers)
+    return job_id, headers
 
 
 def get_first_result(

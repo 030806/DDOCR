@@ -8,10 +8,11 @@ from sqlalchemy import func, select
 from app.main import create_app
 from app.models.schema import pages, results
 from app.models.store import StoredObject
+from tests.ocr_fakes import FakeOcrAdapter, wait_for_job
 
 
 def test_complete_ocr_pipeline_uses_relational_page_and_result_tables(tmp_path: Path) -> None:
-    app = create_app(str(tmp_path), f"sqlite:///{(tmp_path / 'milestone4.db').as_posix()}")
+    app = create_app(str(tmp_path), f"sqlite:///{(tmp_path / 'milestone4.db').as_posix()}", FakeOcrAdapter())
     client = TestClient(app)
     registration = client.post("/api/v1/auth/register", json={
         "name": "OCR 用户", "phone": "13800136666",
@@ -30,6 +31,7 @@ def test_complete_ocr_pipeline_uses_relational_page_and_result_tables(tmp_path: 
         "name": "page result job", "file_id": file_id,
         "model_id": "mock", "model_version": "1.0.0",
     }).json()["data"]["id"]
+    wait_for_job(client, job_id, headers)
 
     response = client.get(f"/api/v1/ocr/jobs/{job_id}/pages/1/results", headers=headers)
     assert response.status_code == 200

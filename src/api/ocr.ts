@@ -1,5 +1,5 @@
 import type { ModelOption, OcrItem, OcrPage } from '../types/ocr'
-import type { OcrTask, TaskStatus } from '../types/task'
+import type { OcrJobStatus, OcrTask, TaskStatus } from '../types/task'
 import { apiClient } from './client'
 
 // OCR 相关 API 封装。
@@ -16,6 +16,12 @@ type ApiJob = {
   model_version: string
   page_count: number
   status: string
+  stage?: string
+  progress?: number
+  started_at?: string | null
+  finished_at?: string | null
+  error_code?: string | null
+  error_message?: string | null
   duration_ms?: number | null
   result_count: number
   review_count: number
@@ -93,6 +99,16 @@ function taskStatus(status: string, reviewCount: number): TaskStatus {
   return 'succeeded'
 }
 
+const jobStatuses = new Set<OcrJobStatus>([
+  'queued', 'running', 'recognizing', 'persisting', 'partial_success',
+  'succeeded', 'failed', 'cancelled',
+])
+
+function jobStatus(status: string, stage?: string): OcrJobStatus {
+  if (status === 'running' && (stage === 'recognizing' || stage === 'persisting')) return stage
+  return jobStatuses.has(status as OcrJobStatus) ? status as OcrJobStatus : 'failed'
+}
+
 // 根据文件扩展名判断文件类型，当前仅区分图片和 PDF。
 function fileType(fileName: string): OcrTask['fileType'] {
   const extension = fileName.split('.').pop()?.toUpperCase()
@@ -112,6 +128,13 @@ export function mapApiJob(job: ApiJob): OcrTask {
     modelName: `${job.model_id} · ${job.model_version}`,
     pageCount: job.page_count,
     status: taskStatus(job.status, job.review_count),
+    jobStatus: jobStatus(job.status, job.stage),
+    stage: job.stage || job.status,
+    progress: Math.min(100, Math.max(0, job.progress ?? (job.status === 'succeeded' ? 100 : 0))),
+    startedAt: job.started_at ?? null,
+    finishedAt: job.finished_at ?? null,
+    errorCode: job.error_code ?? null,
+    errorMessage: job.error_message ?? null,
     durationMs: job.duration_ms ?? null,
     regionCount: job.result_count,
     reviewCount: job.review_count,
