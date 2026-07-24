@@ -39,6 +39,30 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 python -m pytest -q
 ```
 
+## 真实 OCR 运行环境
+
+`requirements.txt` 同时包含 FastAPI、关系数据库、测试工具和真实 PaddleOCR 推理依赖。
+后端直接使用的 Pydantic 也已显式锁定。安装后建议执行 `python -m pip check`。
+
+真实 OCR 默认使用 CPU、2 倍缩放和四方向识别，可通过环境变量调整：
+
+```dotenv
+DDOCR_OCR_DEVICE=cpu
+DDOCR_OCR_SCALE=2.0
+DDOCR_OCR_ROTATIONS=0,90,180,270
+DDOCR_OCR_MAX_CONCURRENCY=1
+DDOCR_OCR_EXECUTION_MODE=async
+```
+
+模型代码和端子编号库位于 `app/vendor/terminal_ocr_demo/`，不依赖仓库根目录的
+`demo/` 或启动时的当前工作目录。PaddleOCR/PaddleX 首次导入和模型加载可能较慢。
+
+真实模型测试默认不执行，需要分别设置 `DDOCR_RUN_PADDLE_SMOKE=1` 或
+`DDOCR_RUN_REAL_OCR_API=1` 后运行对应 integration 测试。
+
+`POST /api/v1/ocr/jobs` 创建 queued 任务后立即返回 HTTP 202。进程内单线程 Worker
+异步执行真实 OCR；客户端应轮询 Job，成功后再读取 Pages/Results。
+
 测试使用临时 SQLite 数据库，不会读写开发环境中的 `ddocr`。生产 PostgreSQL 表只通过 Alembic 管理，应用启动不会隐式建表。
 
 认证模块已经使用 `tenants`、`users`、`sessions` 关系表作为唯一数据源。迁移 `622436c321e7` 会幂等导入旧 `objects(kind='user'/'session')` 数据；文件、OCR 任务及结果在后续里程碑迁移。

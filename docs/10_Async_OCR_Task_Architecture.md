@@ -21,7 +21,7 @@ stateDiagram-v2
 
 ```mermaid
 flowchart LR
-    Vue["Vue（需要轮询）"] -->|POST /ocr/jobs| API["FastAPI"]
+    Vue["Vue（已接入轮询）"] -->|POST /ocr/jobs| API["FastAPI"]
     API -->|创建 queued Job + Page| DB[(Database)]
     API -->|submit(job_id)| Worker["OcrTaskWorker"]
     API -->|HTTP 202 queued| Vue
@@ -58,9 +58,9 @@ PaddleOCR 实例并发调用。应用退出时先等待 Worker，再关闭 Engin
 
 REST 路径、请求体、响应字段、数据库 Schema 和 Vue 文件均未改变。
 
-## 前端需要配合的轮询
+## 前端轮询实现状态
 
-当前 Vue 在 POST 成功后立即读取 Pages/Results，并直接把页面标记为完成。异步后必须：
+Milestone 6 已完成以下前端配合：
 
 1. 接收 POST 返回的 `job_id` 和 `queued` 状态。
 2. 每 1～2 秒调用 `GET /ocr/jobs/{job_id}`。
@@ -69,4 +69,6 @@ REST 路径、请求体、响应字段、数据库 Schema 和 Vue 文件均未�
 5. `failed/cancelled` 时停止轮询并展示错误。
 6. 页面卸载或切换任务时取消定时器和在途请求。
 
-在前端完成上述调整前，后端异步任务会正确执行，但当前页面会过早读取空结果。
+实现位于 `src/composables/useOcrJobPolling.ts`、`src/components/OcrProgressCard.vue`
+和 `src/views/WorkspaceView.vue`。路由切换及组件卸载都会停止 Timer；识别终态之前不会
+请求 Results。

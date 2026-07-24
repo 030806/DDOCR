@@ -2,19 +2,21 @@
 
 ## 1. 架构与技术选型
 
-首期采用“模块化单体 FastAPI + 独立 Celery Worker + 可替换 OCR 推理适配器”。业务 API 不在 HTTP 请求中执行 OCR。
+当前实现采用“模块化单体 FastAPI + 进程内单线程 OCR Worker + 可替换 OCR
+适配器”。业务 API 不在 HTTP 请求线程中执行 OCR。Celery、Redis、对象存储和独立
+GPU 推理服务属于后续规模化目标，当前代码尚未接入。
 
 | 类别 | 选型 |
 |---|---|
 | API | Python 3.11、FastAPI、Uvicorn、Pydantic v2 |
 | 数据 | PostgreSQL 16+、SQLAlchemy 2.x、Alembic |
-| 异步 | Celery 5.x、Redis 7+ |
-| 对象存储 | MinIO（私有部署）或 S3 |
-| PDF/图像 | PyMuPDF、Pillow/OpenCV |
-| OCR | PaddleOCR 首期；ONNX Runtime；GPU 可用 TensorRT/Triton |
+| 异步 | 当前 `ThreadPoolExecutor(max_workers=1)`；后续可迁移 Celery/Redis |
+| 文件存储 | 当前本地 `DDOCR_DATA_DIR`；后续可迁移 MinIO/S3 |
+| PDF/图像 | 当前 Pillow/OpenCV；PDF 渲染尚未落地 |
+| OCR | 当前 PaddleOCR/PaddleX CPU 单实例；GPU/ONNX/Triton 尚未落地 |
 | Excel | openpyxl 流式写模式 |
-| 测试 | pytest、pytest-asyncio、httpx、Testcontainers |
-| 可观测性 | structlog、OpenTelemetry、Prometheus/Grafana |
+| 测试 | 当前 pytest、httpx；真实模型测试通过环境变量选择执行 |
+| 可观测性 | 当前 request/job 状态字段；结构化日志和指标系统尚未接入 |
 
 首期不同时引入 Django，避免双 ORM 和双认证体系。未来确需 Django Admin 时再独立评估。
 
@@ -22,38 +24,33 @@
 
 ```mermaid
 flowchart LR
-    FE["Vue 前端"] -->|REST/SSE| API["FastAPI"]
-    FE -->|签名 URL| OBJ["MinIO/S3"]
+    FE["Vue 前端"] -->|REST + 1 秒轮询| API["FastAPI"]
     API --> PG["PostgreSQL"]
-    API --> REDIS["Redis"]
-    API --> Q["Celery"]
-    Q --> W["Worker"]
-    W --> OBJ
+    API --> W["进程内 OcrTaskWorker"]
+    W --> FS["本地文件存储"]
     W --> PG
-    W --> INF["OCR 适配器/推理服务"]
-    W -->|进度事件| REDIS
+    W --> ADAPTER["OcrAdapter"]
+    ADAPTER --> ENGINE["TerminalOcrEngine"]
+    ENGINE --> PADDLE["PaddleOCR/PaddleX"]
 ```
 
-## 3. 推荐目录
+## 3. 当前与目标目录
 
 ```text
 backend/
-├─ pyproject.toml
+├─ requirements.txt
 ├─ alembic.ini
-├─ src/ddocr/
+├─ app/
 │  ├─ main.py
-│  ├─ api/{dependencies,errors,v1/}
-│  ├─ core/{config,security,logging,telemetry,idempotency}.py
-│  ├─ db/{session,models,repositories,migrations}/
-│  ├─ schemas/
-│  ├─ services/
-│  ├─ storage/{base,s3,keys}.py
-│  ├─ inference/{base,registry,paddle_adapter,onnx_adapter,remote_adapter}.py
-│  ├─ workers/{celery_app,file_tasks,ocr_tasks,export_tasks,cleanup_tasks}.py
-│  └─ events/{publisher,sse}.py
-├─ tests/{unit,integration,contract,fixtures}/
-├─ Dockerfile.api
-└─ Dockerfile.worker
+│  ├─ api/routes.py
+│  ├─ ocr/{contracts,geometry,errors,settings,engine,adapter}.py
+│  ├─ vendor/terminal_ocr_demo/
+│  ├─ workers/ocr_task.py
+│  ├─ services/core.py
+│  ├─ repositories/
+│  └─ models/schema.py
+├─ migrations/
+└─ tests/integration/
 ```
 
 路由只处理 HTTP，服务层定义事务，repository 访问数据库，推理引擎只通过适配器协议接入。
@@ -117,9 +114,11 @@ PostgreSQL 只保存对象键。下载前做权限校验，再生成 5～15 分�
 
 表结构已由 Alembic 迁移 `88d829523673` 落地。ORM 元数据定义位于 `backend/app/models/schema.py`，包含本节列出的 15 张核心关系表、外键、唯一约束、BBox/置信度检查约束及查询索引。`objects` 表暂作为旧接口兼容存储保留，后续 repository 改造完成后再迁移历史数据并移除。
 
-## 7. 异步任务
+## 7. 当前异步任务
 
-流水线：文件校验 → PDF 渲染/图片归一化 → 按页 fan-out → 预处理 → OCR → 结果规范化与事务落库 → 聚合统计。
+当前流水线：创建 queued Job/Page → Worker 串行取任务 → 图片预处理 → OCR →
+Adapter 规范化 → results/page/job 同事务落库。当前只完成单页图片真实 OCR；PDF 渲染、
+多页 fan-out、任务恢复、取消执行和自动重试尚未实现。
 
 - API 创建 job 后通过 transactional outbox 投递 Celery，避免数据库提交与消息发送不一致。
 - Celery 至少一次投递；任务和页面写入必须幂等。

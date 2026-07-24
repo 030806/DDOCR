@@ -4,7 +4,7 @@
 
 ## 1. 目标与边界
 
-本方案把 `demo/terminal_ocr_demo` 提供的 PaddleOCR 识别流程接入 DDOCR
+本方案记录将模型方提供的 PaddleOCR 识别流程接入 DDOCR 的设计；当前迁移和接入已经完成
 后端，替换当前 `MockOcrService.create_job()` 中固定生成的三条结果。
 
 约束如下：
@@ -242,8 +242,7 @@ worker 必须继续使用 `uid()` 生成持久化结果 ID。
 
 ### 5.8 核心模型代码位置
 
-建议把 `demo/terminal_ocr_demo` 复制为
-`backend/app/vendor/terminal_ocr_demo/`，作为版本化 vendor 包；不要让生产代码通过
+模型代码现已迁移为 `backend/app/vendor/terminal_ocr_demo/`，作为版本化 vendor 包；生产代码不通过
 `sys.path` 引用仓库根目录的 demo。只复制核心 `.py` 和编号库，不复制 Streamlit、
 研发脚本、样图、output 历史文件或 `__pycache__`。
 

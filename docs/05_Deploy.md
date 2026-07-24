@@ -2,7 +2,10 @@
 
 ## 1. 开发与测试
 
-Docker Compose 启动：`api`、`worker-cpu`、`postgres`、`redis`、`minio`。测试可使用模拟推理适配器或轻量模型，数据库/Redis/MinIO 集成测试使用真实容器。Alembic 迁移由独立一次性命令执行，不由多个 API 副本并发执行。
+当前仓库尚未提供 Dockerfile 或 Docker Compose。开发环境直接启动 FastAPI，OCR Worker
+与 API 位于同一进程，文件保存在本地 `DDOCR_DATA_DIR`，数据库使用 PostgreSQL；测试
+使用临时 SQLite。Redis、MinIO、Celery 和独立 Worker 容器是后续部署目标，不是当前
+运行依赖。Alembic 迁移应由独立一次性命令执行。
 
 ## 2. 首期生产部署
 
@@ -46,4 +49,3 @@ Docker Compose 启动：`api`、`worker-cpu`、`postgres`、`redis`、`minio`。
 - 容量按日文件数、平均页数、标准图大小、每页结果数和保留期估算。
 - GPU 按峰值页/秒和模型 P95 每页耗时估算。
 - 降级：推理不可用时任务保留排队；SSE 不可用时轮询；导出拥塞独立限流，不影响 OCR 主链路。
-

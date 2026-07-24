@@ -4,7 +4,9 @@
 
 ## 1. 验收结论
 
-真实 OCR API 的同步后端链路已经完整跑通：
+真实 OCR API 的后端链路已经完整跑通。本报告中的 151.23 秒数据来自异步 Worker
+落地前的同步基线；当前 `POST /ocr/jobs` 已立即返回 HTTP 202，由后台 Worker
+继续完成同一套真实推理与持久化流程：
 
 ```text
 注册并登录
@@ -12,6 +14,7 @@
   → 上传 PNG 文件
   → Complete
   → POST /ocr/jobs
+  → OcrTaskWorker
   → TerminalOcrEngine / PP-OCRv5 CPU 推理
   → OcrAdapter 数据转换
   → ocr_jobs / pages / results 关系表
@@ -126,7 +129,7 @@ revision
 
 - 图片上传及归属验证。
 - 图片尺寸解析与受保护原图访问记录。
-- FastAPI 同步调用真实 `TerminalOcrEngine`。
+- 进程内 Worker 异步调用真实 `TerminalOcrEngine`。
 - PaddleOCR detection 和 recognition CPU 推理。
 - ROI 预处理、坐标映射、编号规则及空间后处理。
 - Demo DTO 到 DDOCR DTO 的转换。
@@ -135,12 +138,10 @@ revision
 - Job、Page、Result REST 查询。
 - 前端结果字段兼容。
 
-## 8. 仍然是假实现或尚未验收的部分
+## 8. 仍然保留的兼容命名或尚未验收的部分
 
-- API 模型标识仍为 `mock@1.0.0`，`GET /models` 的名称仍是 Mock OCR。
-- Service 类名仍为 `MockOcrService`。
-- 没有 Worker，`POST /ocr/jobs` 会同步等待模型完成。
-- 没有异步状态更新、任务恢复、重试或取消执行。
+- API 模型标识和 Service 类名仍保留早期 Mock 命名，但 OCR 数据源已经是真实 Engine。
+- 已有进程内单线程 Worker 和异步状态更新；任务恢复、自动重试和取消执行尚未实现。
 - Repository 当前没有持久化 Adapter 提供的完整 `attributes` 审计数据。
 - 本次使用 SQLite 验收；生产 PostgreSQL 的真实 OCR 写入尚未单独执行验收。
 - 本次只验收 PNG 单页图片；PDF 渲染和多页任务没有实现。
@@ -159,19 +160,14 @@ revision
 - Konva 真实结果框展示。
 - 基于真实结果 ID 的现有纠错和评论功能。
 
-暂时不能把“前端上传并等待真实 OCR 完成”视为可交付闭环。当前验收单方向同步调用耗时
-151.23 秒，而前端 Axios 超时为 10 秒。浏览器会在后端完成之前判定请求失败，即使后端
-随后成功写入数据库。
+前端异步闭环现已完成：创建任务后立即进入 Workspace，每 1 秒轮询 Job；识别期间不读取
+Results，`succeeded/partial_success` 后再加载 Pages/Results；失败或取消时停止轮询并
+展示错误。因此 10 秒 Axios 超时不再限制真实 OCR 的后台推理时长。
 
-在“不开发 Worker、不修改前端”的当前约束下，可以由后端测试、Swagger 或其他无
-10 秒超时的客户端先创建真实任务，再让前端联调已完成任务的查询与展示。上传到识别的
-浏览器闭环必须等后续异步任务方案和前端轮询获准后再验收。
+## 10. 当前仍未实施事项
 
-## 10. 本里程碑未实施事项
-
-- 未开发 Worker。
-- 未修改异步状态机。
-- 未修改 Vue、Axios 超时或轮询逻辑。
+- Worker、异步状态机和 Vue 轮询已经落地。
+- 未实现跨进程队列、进程重启恢复、自动重试和真正的取消执行。
 - 未修改 REST API。
 - 未修改 Repository。
 - 未修改数据库 schema。
