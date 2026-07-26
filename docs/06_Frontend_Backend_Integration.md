@@ -102,3 +102,11 @@ SQLite 的 `user` 与 `session` 记录。
 
 工作台无任务 ID 的默认页仍保留原 mock 数据，以确保本阶段不改动上传
 入口和现有演示流程。
+
+## 忘记密码联调
+
+登录页点击“忘记密码？”，先提交联系电话和员工编号至 `POST /api/v1/auth/forgot-password`，再将 6 位验证码和新密码提交至 `POST /api/v1/auth/reset-password`。本地可在 `backend/.env` 设置 `DDOCR_EXPOSE_PASSWORD_RESET_CODE=true`，页面会显示开发验证码。重置成功后返回登录状态，旧密码和重置前签发的 Bearer Token 均失效。生产环境不得暴露开发验证码，需替换为短信发送流程。
+
+## 任务记录导出
+
+任务记录页不再读取 `src/mock.ts`。点击导出后，前端使用所选真实任务 ID 调用 `POST /api/v1/ocr/jobs/{job_id}/exports`，确认导出状态后从 `/api/v1/ocr/jobs/{job_id}/exports/{export_id}/download` 下载后端生成的 Excel。任务记录页固定使用精简模式，Excel 仅包含“编号”和“端子排最终识别结果”，结果值优先采用人工纠正后的文本；下载请求自动携带当前 Bearer Token。

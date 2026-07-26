@@ -148,6 +148,62 @@ def test_registration_rejects_duplicate_identity(tmp_path: Path) -> None:
     assert test_client.post("/api/v1/auth/register", json=body).status_code == 409
 
 
+def test_forgot_password_reset_revokes_sessions(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("DDOCR_EXPOSE_PASSWORD_RESET_CODE", "true")
+    test_client = client(tmp_path)
+    registration = test_client.post(
+        "/api/v1/auth/register",
+        json={
+            "name": "找回用户", "phone": "13800138888",
+            "password": "Original123", "employee_no": "QC-RESET",
+        },
+    ).json()["data"]
+    old_headers = {"Authorization": f"Bearer {registration['access_token']}"}
+
+    requested = test_client.post(
+        "/api/v1/auth/forgot-password",
+        json={"phone": "13800138888", "employee_no": "QC-RESET"},
+    )
+    assert requested.status_code == 202
+    reset_data = requested.json()["data"]
+    assert reset_data["expires_in"] == 600
+    assert len(reset_data["development_code"]) == 6
+
+    reset = test_client.post(
+        "/api/v1/auth/reset-password",
+        json={
+            "phone": "13800138888", "code": reset_data["development_code"],
+            "new_password": "Replacement456",
+        },
+    )
+    assert reset.status_code == 204
+    assert test_client.get("/api/v1/users/me", headers=old_headers).status_code == 401
+    assert test_client.post(
+        "/api/v1/auth/login", json={"phone": "13800138888", "password": "Original123"},
+    ).status_code == 401
+    assert test_client.post(
+        "/api/v1/auth/login", json={"phone": "13800138888", "password": "Replacement456"},
+    ).status_code == 200
+    assert test_client.post(
+        "/api/v1/auth/reset-password",
+        json={"phone": "13800138888", "code": reset_data["development_code"], "new_password": "Again7890"},
+    ).status_code == 400
+
+
+def test_forgot_password_does_not_reveal_identity(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("DDOCR_EXPOSE_PASSWORD_RESET_CODE", "true")
+    test_client = client(tmp_path)
+    response = test_client.post(
+        "/api/v1/auth/forgot-password",
+        json={"phone": "13999999999", "employee_no": "UNKNOWN"},
+    )
+    assert response.status_code == 202
+    assert response.json()["data"] == {
+        "message": "如果账号信息匹配，重置验证码已生成",
+        "expires_in": 600,
+    }
+
+
 def test_upload_job_and_results(tmp_path: Path) -> None:
     test_client = client(tmp_path)
     job_id, headers = workflow(test_client)

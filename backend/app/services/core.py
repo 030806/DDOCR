@@ -1,6 +1,8 @@
 import hashlib
 import hmac
+import os
 import secrets
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
@@ -12,7 +14,7 @@ from app.models.store import Store
 from app.ocr.adapter import OcrAdapter
 from app.ocr.contracts import OcrAdapterProtocol
 from app.ocr.engine import TerminalOcrEngine
-from app.repositories.auth import SessionRepository, TenantRepository, UserRepository
+from app.repositories.auth import PasswordResetRepository, SessionRepository, TenantRepository, UserRepository
 from app.repositories.correction_comment import CommentRepository, CorrectionRepository
 from app.repositories.file_job import FileRepository, OCRJobRepository
 from app.repositories.export_idempotency import ExportRepository, IdempotencyRepository
@@ -45,6 +47,7 @@ class MockOcrService:
         self.tenants = TenantRepository(store.engine)
         self.users = UserRepository(store.engine)
         self.sessions = SessionRepository(store.engine)
+        self.password_resets = PasswordResetRepository(store.engine)
         self.files = FileRepository(store.engine)
         self.jobs = OCRJobRepository(store.engine)
         self.page_repository = PageRepository(store.engine)
@@ -156,6 +159,48 @@ class MockOcrService:
             "password_salt": salt,
             "password_hash": password_hash,
         })
+
+    @staticmethod
+    def _reset_code_hash(code: str, salt_hex: str | None = None) -> str:
+        salt = bytes.fromhex(salt_hex) if salt_hex else secrets.token_bytes(16)
+        digest = hashlib.pbkdf2_hmac("sha256", code.encode(), salt, 120_000)
+        return f"{salt.hex()}${digest.hex()}"
+
+    def request_password_reset(self, phone: str, employee_no: str) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "message": "如果账号信息匹配，重置验证码已生成",
+            "expires_in": 600,
+        }
+        user = self.users.find_by_phone(phone.strip())
+        if not user or user.get("deleted") or user.get("employee_no") != employee_no.strip():
+            return result
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        self.password_resets.create(
+            uid(), user["id"], self._reset_code_hash(code), datetime.now(UTC) + timedelta(minutes=10),
+        )
+        if os.getenv("DDOCR_EXPOSE_PASSWORD_RESET_CODE", "false").lower() in {"1", "true", "yes"}:
+            result["development_code"] = code
+        return result
+
+    def reset_password(self, phone: str, code: str, new_password: str) -> None:
+        user = self.users.find_by_phone(phone.strip())
+        token = self.password_resets.latest_active(user["id"]) if user and not user.get("deleted") else None
+        invalid = HTTPException(400, "验证码无效或已过期")
+        if not user or not token or token["attempt_count"] >= 5:
+            raise invalid
+        expires_at = token["expires_at"]
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        salt_hex, expected = token["code_hash"].split("$", 1)
+        actual = self._reset_code_hash(code, salt_hex).split("$", 1)[1]
+        if expires_at <= datetime.now(UTC) or not hmac.compare_digest(actual, expected):
+            self.password_resets.increment_attempts(token["id"])
+            raise invalid
+        self._validate_password(new_password)
+        salt, password_hash = self._password_hash(new_password)
+        self.users.update(user["id"], {"password_salt": salt, "password_hash": password_hash})
+        self.password_resets.mark_used(token["id"])
+        self.sessions.revoke_all_for_user(user["id"])
 
     def create_upload(
         self,
@@ -532,9 +577,11 @@ class MockOcrService:
         export_path = self.store.exports / f"{export_id}.xlsx"
         workbook = Workbook()
         worksheet = workbook.active
-        worksheet.title = "OCR Results"
-        worksheet.append(
-            [
+        worksheet.title = "精简结果" if body.mode == "simple" else "完整结果"
+        if body.mode == "simple":
+            worksheet.append(["编号", "端子排最终识别结果"])
+        else:
+            worksheet.append([
                 "page_no",
                 "reading_order",
                 "original_text",
@@ -542,9 +589,8 @@ class MockOcrService:
                 "confidence",
                 "bbox",
                 "comments",
-            ]
-        )
-        self._append_export_rows(worksheet, job)
+            ])
+        self._append_export_rows(worksheet, job, body.mode)
         workbook.save(export_path)
 
         export = {
@@ -600,13 +646,19 @@ class MockOcrService:
         self,
         worksheet: Any,
         job: dict[str, Any],
+        mode: str,
     ) -> None:
+        item_index = 0
         for page_id in job["page_ids"]:
             page = self.page_repository.get(page_id)
             if page is None:
                 continue
             for result_id in page["result_ids"]:
                 result = self.public_result(self.result(result_id))
+                item_index += 1
+                if mode == "simple":
+                    worksheet.append([str(item_index).zfill(2), result["display_text"]])
+                    continue
                 comments = " | ".join(
                     comment["content"] for comment in result["comments"]
                 )

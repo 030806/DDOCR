@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apiClient } from './client'
-import { createComment, createCorrection, deleteComment, getModels, getOcrPages, mapApiJob, mapApiResult, updateComment, uploadAndCreateOcrTask } from './ocr'
+import { createComment, createCorrection, deleteComment, exportTaskResults, getModels, getOcrPages, mapApiJob, mapApiResult, updateComment, uploadAndCreateOcrTask } from './ocr'
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
@@ -188,5 +188,30 @@ describe('OCR API adapters', () => {
       { corrected_text: 'XT-102', base_revision: 1 },
       { headers: { 'Idempotency-Key': expect.any(String) } },
     )
+  })
+
+  it('creates and downloads a backend export for the selected real task', async () => {
+    const click = vi.fn()
+    const createObjectURL = vi.fn(() => 'blob:task-export')
+    const revokeObjectURL = vi.fn()
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL })
+    vi.stubGlobal('document', { createElement: vi.fn(() => ({ href: '', download: '', click })) })
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: { data: {
+        id: 'export-1', job_id: 'job-1', status: 'succeeded',
+        download_url: 'http://127.0.0.1:8000/api/v1/ocr/jobs/job-1/exports/export-1/download',
+      } },
+    })
+    const get = vi.spyOn(apiClient, 'get').mockResolvedValue({ data: new Blob(['xlsx']) })
+
+    await exportTaskResults('job-1', '端子/任务', 'simple')
+
+    expect(post).toHaveBeenCalledWith('/ocr/jobs/job-1/exports', {
+      format: 'xlsx', mode: 'simple', scope: 'all_pages',
+    })
+    expect(get).toHaveBeenCalledWith('/ocr/jobs/job-1/exports/export-1/download', { responseType: 'blob' })
+    expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob))
+    expect(click).toHaveBeenCalledOnce()
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:task-export')
   })
 })

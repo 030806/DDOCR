@@ -61,3 +61,13 @@ class PasswordChange(BaseModel):
     current_password: str = Field(min_length=1, max_length=128)
     new_password: str = Field(min_length=8, max_length=128)
 
+
+class ForgotPasswordCreate(BaseModel):
+    phone: str = Field(min_length=7, max_length=30)
+    employee_no: str = Field(min_length=1, max_length=40)
+
+
+class PasswordResetCreate(BaseModel):
+    phone: str = Field(min_length=7, max_length=30)
+    code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+    new_password: str = Field(min_length=8, max_length=128)

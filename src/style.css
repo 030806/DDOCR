@@ -85,6 +85,8 @@ button { font: inherit; }
 .auth-card h1 { margin: 0; color: #162d27; font-size: 28px; }
 .auth-card > p { margin: 7px 0 24px; color: #70817b; }
 .auth-switch { display: block; margin: 20px auto 0; border: 0; background: none; color: #168b6c; cursor: pointer; }
+.auth-switch + .auth-switch { margin-top: 10px; }
+.reset-code-alert { margin-bottom: 20px; }
 .ocr-progress-card { width: min(680px, calc(100% - 48px)); margin: 40px auto; padding: 32px; display: flex; gap: 24px; border: 1px solid #d9e2ec; border-radius: 16px; background: #fff; box-shadow: 0 12px 32px rgba(15, 23, 42, .08); }
 .ocr-progress-card.is-failed { border-color: #ffccc7; }
 .ocr-progress-spinner { width: 48px; height: 48px; flex: 0 0 auto; border: 4px solid #e6f4ff; border-top-color: #1677ff; border-radius: 50%; animation: ocr-progress-spin .9s linear infinite; }

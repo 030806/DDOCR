@@ -221,3 +221,14 @@ result_count, review_count, created_by{id,name}, error
 | GET | `/api/v1/ocr/jobs/{job_id}/exports/{export_id}` | 查询状态和短期下载地址 |
 
 创建请求：`{"format":"xlsx","mode":"full","scope":"all_pages"}`。`mode` 支持 `simple | full`。下载地址生成前校验任务权限并明确过期时间。
+
+`mode=simple` 生成“精简结果”工作表，仅包含编号和最终识别结果（优先使用纠正文本）；`mode=full` 保留页码、阅读顺序、原文、最终文本、置信度、BBox 和留言。
+
+## 10. 忘记密码 MVP
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/v1/auth/forgot-password` | 使用联系电话和员工编号申请一次性验证码，统一返回 202 |
+| POST | `/api/v1/auth/reset-password` | 使用联系电话、验证码和新密码完成重置，成功返回 204 |
+
+验证码为 6 位数字，有效期 10 分钟，最多允许 5 次错误尝试；再次申请会使旧验证码失效。重置成功后撤销该用户全部已有会话。仅当 `DDOCR_EXPOSE_PASSWORD_RESET_CODE=true` 时，申请响应的 `data` 包含 `development_code` 供本地联调。生产环境必须关闭该配置并接入短信发送服务。

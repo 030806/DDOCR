@@ -2,6 +2,7 @@ from io import BytesIO
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 from PIL import Image
 from sqlalchemy import func, select
 
@@ -50,14 +51,20 @@ def test_export_and_idempotency_use_relational_tables(tmp_path: Path) -> None:
 
     export = client.post(
         f"/api/v1/ocr/jobs/{job_id}/exports", headers=headers,
-        json={"format": "xlsx", "mode": "full", "scope": "all_pages"},
+        json={"format": "xlsx", "mode": "simple", "scope": "all_pages"},
     ).json()["data"]
     assert client.get(
         f"/api/v1/ocr/jobs/{job_id}/exports/{export['id']}", headers=headers
     ).status_code == 200
-    assert client.get(
+    download = client.get(
         f"/api/v1/ocr/jobs/{job_id}/exports/{export['id']}/download", headers=headers
-    ).status_code == 200
+    )
+    assert download.status_code == 200
+    worksheet = load_workbook(BytesIO(download.content)).active
+    assert worksheet.title == "精简结果"
+    assert [cell.value for cell in worksheet[1]] == ["编号", "端子排最终识别结果"]
+    assert worksheet.cell(row=2, column=1).value == "01"
+    assert worksheet.cell(row=2, column=2).value == "XT-200"
 
     with app.state.service.store.engine.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(exports)) == 1

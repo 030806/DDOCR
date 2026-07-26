@@ -14,7 +14,7 @@ class DemoConfig:
     rec_model_name: str = "PP-OCRv5_mobile_rec"
     device: str = "cpu"
     scale: float = 2.0
-    rotations: tuple[int, ...] = (0, 90, 180, 270)
+    rotations: tuple[int, ...] = (0, 90, 180, 270) #, 90, 180, 270
     min_roi_size: int = 8
     output_root: Path = PACKAGE_ROOT / "outputs" / "demo_runs"
     code_library_path: Path = RESOURCE_ROOT / "terminal_id_library.csv"

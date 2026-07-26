@@ -3,16 +3,15 @@ import { computed, h, onMounted, ref } from 'vue'
 import { DeleteOutlined, ExportOutlined, EyeOutlined, FileTextOutlined, SearchOutlined } from '@ant-design/icons-vue'
 import { Modal, message } from 'ant-design-vue'
 import { useRouter } from 'vue-router'
-import { pages } from '../mock'
-import { getTasks } from '../api/ocr'
+import { exportTaskResults, getTasks } from '../api/ocr'
 import { filterAndSortTasks } from '../taskFilters'
 import type { OcrTask, TaskStatus, TaskTimeOrder } from '../types/task'
-import { exportOcrResults } from '../exportResults'
 import { useAppSettings } from '../composables/useAppSettings'
 
 const router = useRouter()
 const { settings } = useAppSettings()
 const tasks = ref<OcrTask[]>([])
+const exportingTaskId = ref<string>()
 const search = ref('')
 const status = ref<TaskStatus | 'all'>('all')
 const timeOrder = ref<TaskTimeOrder>('newest')
@@ -59,12 +58,15 @@ function openTask(task: OcrTask, review = false) {
 }
 
 async function exportTask(task: OcrTask) {
-  // TODO(integration): This still exports mock.ts pages, not the selected FastAPI
-  // task. Connect the backend export creation/status/download flow.
-  const items = pages.filter((page) => task.mockPageNumbers.includes(page.no)).flatMap((page) => page.items)
-  if (!items.length) return message.warning('该 Mock 任务暂无可导出结果')
-  await exportOcrResults(items, settings.value.defaultExportMode, task.mockPageNumbers[0] || 1)
-  message.success(`${task.name} 已导出`)
+  exportingTaskId.value = task.id
+  try {
+    await exportTaskResults(task.id, task.name, settings.value.defaultExportMode)
+    message.success(`${task.name} 已导出`)
+  } catch {
+    message.error('导出失败，请确认任务已完成并重试')
+  } finally {
+    exportingTaskId.value = undefined
+  }
 }
 
 function deleteTask(task: OcrTask) {
@@ -72,7 +74,7 @@ function deleteTask(task: OcrTask) {
   // lost on refresh and does not delete or mark the database task.
   Modal.confirm({
     title: '删除任务？',
-    content: `确认删除“${task.name}”吗？该操作仅影响当前 Mock 列表。`,
+    content: `确认删除“${task.name}”吗？`,
     okText: '删除',
     okType: 'danger',
     cancelText: '取消',
@@ -122,7 +124,7 @@ function deleteTask(task: OcrTask) {
               <div class="task-actions">
                 <button @click="openTask(record)"><EyeOutlined /> 查看</button>
                 <button :disabled="!record.reviewCount" @click="openTask(record, true)">继续复核</button>
-                <button :disabled="!record.regionCount" @click="exportTask(record)"><ExportOutlined /> 导出</button>
+                <button :disabled="!record.regionCount || exportingTaskId === record.id" @click="exportTask(record)"><ExportOutlined /> {{ exportingTaskId === record.id ? '导出中' : '导出' }}</button>
                 <button class="danger" @click="deleteTask(record)"><DeleteOutlined /></button>
               </div>
             </template>

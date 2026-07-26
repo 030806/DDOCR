@@ -8,9 +8,11 @@ from app.schemas.contracts import (
     CommentUpdate,
     CorrectionCreate,
     ExportCreate,
+    ForgotPasswordCreate,
     JobCreate,
     LoginCreate,
     PasswordChange,
+    PasswordResetCreate,
     ProfileUpdate,
     RegisterCreate,
     UploadSessionCreate,
@@ -47,6 +49,17 @@ def register(body: RegisterCreate, request: Request) -> dict[str, Any]:
 @router.post("/auth/login")
 def login(body: LoginCreate, request: Request) -> dict[str, Any]:
     return envelope(service(request).login_user(body.phone, body.password))
+
+
+@router.post("/auth/forgot-password", status_code=202)
+def forgot_password(body: ForgotPasswordCreate, request: Request) -> dict[str, Any]:
+    return envelope(service(request).request_password_reset(body.phone, body.employee_no))
+
+
+@router.post("/auth/reset-password", status_code=204)
+def reset_password(body: PasswordResetCreate, request: Request) -> Response:
+    service(request).reset_password(body.phone, body.code, body.new_password)
+    return Response(status_code=204)
 
 
 @router.post("/auth/logout", status_code=204)

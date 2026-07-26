@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apiClient } from './client'
-import { getCurrentUser, login, updateProfile } from './auth'
+import { getCurrentUser, login, requestPasswordReset, resetPassword, updateProfile } from './auth'
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
@@ -33,5 +33,19 @@ describe('auth API', () => {
     const patch = vi.spyOn(apiClient, 'patch').mockResolvedValue({ data: { data: apiUser, request_id: 'req-2' } })
     await updateProfile({ name: '林工', department: '质量部', phone: '13800132607' })
     expect(patch).toHaveBeenCalledWith('/users/me', { name: '林工', department: '质量部', phone: '13800132607' })
+  })
+
+  it('requests and confirms a password reset', async () => {
+    const post = vi.spyOn(apiClient, 'post')
+      .mockResolvedValueOnce({ data: { data: { message: 'ok', expires_in: 600, development_code: '123456' } } })
+      .mockResolvedValueOnce({ status: 204 })
+    await expect(requestPasswordReset('13800132607', 'QC-042')).resolves.toMatchObject({ development_code: '123456' })
+    expect(post).toHaveBeenNthCalledWith(1, '/auth/forgot-password', {
+      phone: '13800132607', employee_no: 'QC-042',
+    })
+    await resetPassword('13800132607', '123456', 'Updated456')
+    expect(post).toHaveBeenNthCalledWith(2, '/auth/reset-password', {
+      phone: '13800132607', code: '123456', new_password: 'Updated456',
+    })
   })
 })

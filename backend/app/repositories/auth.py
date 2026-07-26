@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy import Engine, insert, select, update
 from sqlalchemy.orm import Session
 
-from app.models.schema import sessions, tenants, users
+from app.models.schema import password_reset_tokens, sessions, tenants, users
 
 DEFAULT_TENANT_ID = "00000000-0000-0000-0000-000000000001"
 DEFAULT_TENANT_SLUG = "default"
@@ -141,4 +141,54 @@ class SessionRepository:
                 update(sessions)
                 .where(sessions.c.token == token, sessions.c.revoked_at.is_(None))
                 .values(revoked_at=datetime.now(UTC))
+            )
+
+    def revoke_all_for_user(self, user_id: str) -> None:
+        with Session(self.engine) as db, db.begin():
+            db.execute(
+                update(sessions)
+                .where(sessions.c.user_id == user_id, sessions.c.revoked_at.is_(None))
+                .values(revoked_at=datetime.now(UTC))
+            )
+
+
+class PasswordResetRepository:
+    def __init__(self, engine: Engine) -> None:
+        self.engine = engine
+
+    def create(self, token_id: str, user_id: str, code_hash: str, expires_at: datetime) -> None:
+        with Session(self.engine) as db, db.begin():
+            db.execute(
+                update(password_reset_tokens)
+                .where(password_reset_tokens.c.user_id == user_id, password_reset_tokens.c.used_at.is_(None))
+                .values(used_at=datetime.now(UTC))
+            )
+            db.execute(insert(password_reset_tokens).values(
+                id=token_id, user_id=user_id, code_hash=code_hash, expires_at=expires_at,
+            ))
+
+    def latest_active(self, user_id: str) -> dict[str, Any] | None:
+        with Session(self.engine) as db:
+            row = db.execute(
+                select(password_reset_tokens)
+                .where(password_reset_tokens.c.user_id == user_id, password_reset_tokens.c.used_at.is_(None))
+                .order_by(password_reset_tokens.c.created_at.desc())
+                .limit(1)
+            ).first()
+            return dict(row._mapping) if row else None
+
+    def increment_attempts(self, token_id: str) -> None:
+        with Session(self.engine) as db, db.begin():
+            db.execute(
+                update(password_reset_tokens)
+                .where(password_reset_tokens.c.id == token_id)
+                .values(attempt_count=password_reset_tokens.c.attempt_count + 1)
+            )
+
+    def mark_used(self, token_id: str) -> None:
+        with Session(self.engine) as db, db.begin():
+            db.execute(
+                update(password_reset_tokens)
+                .where(password_reset_tokens.c.id == token_id)
+                .values(used_at=datetime.now(UTC))
             )

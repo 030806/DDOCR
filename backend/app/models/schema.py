@@ -84,6 +84,19 @@ sessions = Table(
 Index("ix_sessions_user_id", sessions.c.user_id)
 Index("ix_sessions_expires_at", sessions.c.expires_at)
 
+password_reset_tokens = Table(
+    "password_reset_tokens", Base.metadata,
+    id_column(),
+    Column("user_id", String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("code_hash", String(255), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("attempt_count", Integer, nullable=False, server_default="0"),
+    Column("used_at", DateTime(timezone=True)),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+Index("ix_password_reset_tokens_user_created", password_reset_tokens.c.user_id, password_reset_tokens.c.created_at)
+Index("ix_password_reset_tokens_expires_at", password_reset_tokens.c.expires_at)
+
 user_preferences = Table(
     "user_preferences", Base.metadata,
     Column("user_id", String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),

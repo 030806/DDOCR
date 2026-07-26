@@ -39,6 +39,23 @@ export async function register(input: RegisterInput) {
   return storeSession(response.data.data)
 }
 
+export async function requestPasswordReset(phone: string, employeeNo: string) {
+  const response = await apiClient.post<ApiEnvelope<{
+    message: string
+    expires_in: number
+    development_code?: string
+  }>>('/auth/forgot-password', { phone, employee_no: employeeNo })
+  return response.data.data
+}
+
+export async function resetPassword(phone: string, code: string, newPassword: string) {
+  await apiClient.post('/auth/reset-password', {
+    phone,
+    code,
+    new_password: newPassword,
+  })
+}
+
 export async function getCurrentUser() {
   const response = await apiClient.get<ApiEnvelope<ApiUser>>('/users/me')
   return mapUser(response.data.data)

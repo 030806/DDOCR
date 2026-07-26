@@ -76,3 +76,5 @@ OCR 纠正和评论使用 `corrections`、`comments` 关系表作为唯一数据
 导出和幂等响应使用 `exports`、`idempotency_records` 关系表作为唯一数据源。迁移 `cae54d372859` 会幂等导入旧 `objects(kind='export'/'idempotency')` 数据。业务代码不再读写通用 `objects` 表。
 
 健康检查：`GET http://127.0.0.1:8000/health`；Swagger：`http://127.0.0.1:8000/docs`。
+
+忘记密码本地联调可在 `.env` 设置 `DDOCR_EXPOSE_PASSWORD_RESET_CODE=true`，使申请接口返回开发验证码。生产环境必须保持为 `false` 并接入短信发送服务。数据库升级需执行 `alembic upgrade head` 以创建 `password_reset_tokens` 表。

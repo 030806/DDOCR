@@ -1,5 +1,6 @@
 import type { ModelOption, OcrItem, OcrPage } from '../types/ocr'
 import type { OcrJobStatus, OcrTask, TaskStatus } from '../types/task'
+import type { ExportMode } from '../exportResults'
 import { apiClient } from './client'
 
 // OCR 相关 API 封装。
@@ -78,6 +79,13 @@ type ApiCreatedJob = {
   stage: string
   progress: number
   created_at: string
+}
+
+type ApiExport = {
+  id: string
+  job_id: string
+  status: 'queued' | 'running' | 'succeeded' | 'failed'
+  download_url: string | null
 }
 
 type ApiModel = {
@@ -217,6 +225,37 @@ export async function getTasks(): Promise<OcrTask[]> {
 
   return response.data.data.items.map(mapApiJob)
 }
+
+// 创建服务端全任务导出，并下载由后端真实 OCR 结果生成的 Excel。
+export async function exportTaskResults(taskId: string, taskName: string, mode: ExportMode) {
+  const created = await apiClient.post<ApiEnvelope<ApiExport>>(`/ocr/jobs/${taskId}/exports`, {
+    format: 'xlsx',
+    mode,
+    scope: 'all_pages',
+  })
+  let taskExport = created.data.data
+
+  if (taskExport.status !== 'succeeded') {
+    const statusResponse = await apiClient.get<ApiEnvelope<ApiExport>>(
+      `/ocr/jobs/${taskId}/exports/${taskExport.id}`,
+    )
+    taskExport = statusResponse.data.data
+  }
+  if (taskExport.status !== 'succeeded' || !taskExport.download_url) {
+    throw new Error(taskExport.status === 'failed' ? 'Export failed' : 'Export is not ready')
+  }
+
+  const downloadPath = taskExport.download_url.replace(/^https?:\/\/[^/]+\/api\/v1/, '').replace(/^\/api\/v1/, '')
+  const response = await apiClient.get<Blob>(downloadPath, { responseType: 'blob' })
+  const objectUrl = URL.createObjectURL(response.data)
+  const link = document.createElement('a')
+  link.href = objectUrl
+  link.download = `${taskName.replace(/[\\/:*?"<>|]/g, '_')}_${mode === 'simple' ? '精简' : '完整'}.xlsx`
+  link.click()
+  URL.revokeObjectURL(objectUrl)
+}
+
+
 
 // 获取单个任务详情。
 export async function getTask(taskId: string): Promise<OcrTask> {
