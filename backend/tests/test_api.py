@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 from PIL import Image
+from openpyxl import load_workbook
 
 from app.main import create_app
 from tests.ocr_fakes import FakeOcrAdapter, wait_for_job
@@ -98,6 +99,18 @@ def test_empty_backend_seeds_api_demo_results(
     jobs_response = test_client.get("/api/v1/ocr/jobs", headers=headers)
     jobs = jobs_response.json()["data"]["items"]
     assert jobs == []
+
+
+def test_upload_session_advertises_200_mib_limit(tmp_path: Path) -> None:
+    test_client = client(tmp_path)
+    headers = register_headers(test_client)
+    response = test_client.post(
+        "/api/v1/files/upload-sessions",
+        headers=headers,
+        json={"file_name": "large.png", "size_bytes": 150 * 1024 * 1024, "media_type": "image/png"},
+    )
+    assert response.status_code == 201
+    assert response.json()["data"]["max_size_bytes"] == 200 * 1024 * 1024
 
 
 def test_register_login_profile_password_and_logout(tmp_path: Path) -> None:
@@ -240,6 +253,93 @@ def test_upload_job_and_results(tmp_path: Path) -> None:
     assert image["url"] == f"/files/{job['file_id']}/content"
     assert image["width_px"] == 1200
     assert image["height_px"] == 1600
+
+
+def test_review_status_is_persisted_and_excluded_from_export(tmp_path: Path) -> None:
+    test_client = client(tmp_path)
+    job_id, headers = workflow(test_client)
+    results_response = test_client.get(
+        f"/api/v1/ocr/jobs/{job_id}/pages/1/results", headers=headers,
+    )
+    items = results_response.json()["data"]["items"]
+    assert all(item["review_status"] == "unreviewed" for item in items)
+
+    false_positive_id, deleted_id = items[0]["id"], items[1]["id"]
+    marked = test_client.post(
+        "/api/v1/ocr/results/review-status", headers=headers,
+        json={"result_ids": [false_positive_id], "review_status": "false_positive"},
+    )
+    deleted = test_client.post(
+        "/api/v1/ocr/results/review-status", headers=headers,
+        json={"result_ids": [deleted_id], "review_status": "deleted"},
+    )
+    assert marked.json()["data"]["updated_count"] == 1
+    assert deleted.json()["data"]["updated_count"] == 1
+
+    export = test_client.post(
+        f"/api/v1/ocr/jobs/{job_id}/exports", headers=headers,
+        json={"format": "xlsx", "mode": "simple", "scope": "all_pages"},
+    ).json()["data"]
+    download = test_client.get(
+        f"/api/v1/ocr/jobs/{job_id}/exports/{export['id']}/download", headers=headers,
+    )
+    workbook = load_workbook(BytesIO(download.content), read_only=True)
+    rows = list(workbook.active.iter_rows(values_only=True))
+    assert len(rows) == 2  # header plus the one remaining effective result
+
+    restored = test_client.post(
+        "/api/v1/ocr/results/review-status", headers=headers,
+        json={"result_ids": [false_positive_id, deleted_id], "review_status": "unreviewed"},
+    )
+    assert restored.json()["data"]["updated_count"] == 2
+
+
+def test_batch_result_geometry_edits_update_create_and_delete(tmp_path: Path) -> None:
+    test_client = client(tmp_path)
+    job_id, headers = workflow(test_client)
+    before = test_client.get(
+        f"/api/v1/ocr/jobs/{job_id}/pages/1/results", headers=headers,
+    ).json()["data"]["items"]
+    updated_id, deleted_id = before[0]["id"], before[1]["id"]
+    response = test_client.post(
+        f"/api/v1/ocr/jobs/{job_id}/pages/1/result-edits", headers=headers,
+        json={
+            "updates": [{
+                "result_id": updated_id, "bbox": [20, 30, 240, 100],
+                "polygon": [[25, 30], [240, 35], [235, 100], [20, 95]], "base_revision": 0,
+            }],
+            "creates": [{
+                "client_id": "draft-1", "bbox": [300, 300, 500, 360],
+                "polygon": [[305, 300], [500, 305], [495, 360], [300, 355]], "text": "MANUAL-X1",
+            }],
+            "deletes": [{"result_id": deleted_id}],
+        },
+    )
+    assert response.status_code == 200
+    saved = response.json()["data"]
+    assert saved["updated"][0]["bbox"] == [20.0, 30.0, 240.0, 100.0]
+    assert saved["updated"][0]["polygon"] == [[25.0, 30.0], [240.0, 35.0], [235.0, 100.0], [20.0, 95.0]]
+    assert saved["created"][0]["client_id"] == "draft-1"
+    assert saved["deleted"] == [deleted_id]
+
+    after = test_client.get(
+        f"/api/v1/ocr/jobs/{job_id}/pages/1/results", headers=headers,
+    ).json()["data"]["items"]
+    updated = next(item for item in after if item["id"] == updated_id)
+    manual = next(item for item in after if item["text"] == "MANUAL-X1")
+    deleted = next(item for item in after if item["id"] == deleted_id)
+    assert updated["bbox"] == [20.0, 30.0, 240.0, 100.0]
+    assert updated["polygon"] == [[25.0, 30.0], [240.0, 35.0], [235.0, 100.0], [20.0, 95.0]]
+    assert updated["geometry_revision"] == 1
+    assert manual["attributes"]["source"] == "manual"
+    assert manual["polygon"] == [[305.0, 300.0], [500.0, 305.0], [495.0, 360.0], [300.0, 355.0]]
+    assert deleted["review_status"] == "deleted"
+
+    conflict = test_client.post(
+        f"/api/v1/ocr/jobs/{job_id}/pages/1/result-edits", headers=headers,
+        json={"updates": [{"result_id": updated_id, "bbox": [25, 30, 245, 100], "base_revision": 0}]},
+    )
+    assert conflict.status_code == 409
 
 
 def test_correction_comment_and_export(tmp_path: Path) -> None:

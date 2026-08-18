@@ -12,4 +12,8 @@ describe('application settings storage', () => {
     expect(parseStoredSettings('{bad json')).toEqual(DEFAULT_APP_SETTINGS)
     expect(parseStoredSettings(JSON.stringify({ lowConfidenceThreshold: 2, defaultZoom: 4 }))).toMatchObject({ lowConfidenceThreshold: 0.95, defaultZoom: 0.82 })
   })
+
+  it('accepts a default zoom up to 300%', () => {
+    expect(parseStoredSettings(JSON.stringify({ defaultZoom: 3 })).defaultZoom).toBe(3)
+  })
 })

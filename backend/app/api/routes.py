@@ -15,6 +15,8 @@ from app.schemas.contracts import (
     PasswordResetCreate,
     ProfileUpdate,
     RegisterCreate,
+    ResultReviewStatusUpdate,
+    ResultEditsCreate,
     UploadSessionCreate,
 )
 from app.services.core import MockOcrService
@@ -327,6 +329,31 @@ def results(
         "items": result_items,
     }
     return envelope(data)
+
+
+@router.post("/ocr/results/review-status")
+def update_result_review_status(
+    body: ResultReviewStatusUpdate,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
+    actor = authenticated_user(request, authorization)
+    items = service(request).update_result_review_status(
+        body.result_ids, body.review_status, actor["id"],
+    )
+    return envelope({"updated_count": len(items), "items": items})
+
+
+@router.post("/ocr/jobs/{job_id}/pages/{page_no}/result-edits")
+def save_result_edits(
+    job_id: str,
+    page_no: int,
+    body: ResultEditsCreate,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
+    actor = authenticated_user(request, authorization)
+    return envelope(service(request).save_result_edits(job_id, page_no, body, actor["id"]))
 
 
 @router.post("/ocr/results/{result_id}/corrections", status_code=201)

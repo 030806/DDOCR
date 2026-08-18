@@ -38,7 +38,7 @@ function reset() {
       <a-form-item label="默认结果展示模式"><a-radio-group v-model:value="draft.defaultResultViewMode" button-style="solid"><a-radio-button value="list">列表</a-radio-button><a-radio-button value="layout">原位布局</a-radio-button></a-radio-group></a-form-item>
       <a-form-item label="默认显示置信度"><a-switch v-model:checked="draft.showConfidence" /></a-form-item>
       <a-form-item label="默认 Excel 导出类型"><a-select v-model:value="draft.defaultExportMode" :options="[{ value: 'simple', label: '精简导出' }, { value: 'full', label: '完整导出' }]" /></a-form-item>
-      <a-form-item label="默认页面缩放比例"><a-select v-model:value="draft.defaultZoom" :options="[{ value: .55, label: '55%' }, { value: .7, label: '70%' }, { value: .82, label: '82%（适应窗口）' }, { value: 1, label: '100%' }, { value: 1.15, label: '115%' }]" /></a-form-item>
+      <a-form-item label="默认页面缩放比例"><a-select v-model:value="draft.defaultZoom" :options="[{ value: .55, label: '55%' }, { value: .7, label: '70%' }, { value: .82, label: '82%（适应窗口）' }, { value: 1, label: '100%' }, { value: 1.5, label: '150%' }, { value: 2, label: '200%' }, { value: 3, label: '300%' }]" /></a-form-item>
     </a-form>
     <template #footer><div class="settings-footer"><button class="settings-reset" @click="reset">恢复默认设置</button><div><a-button @click="emit('update:open', false)">取消</a-button><a-button type="primary" @click="save">保存设置</a-button></div></div></template>
   </a-drawer>

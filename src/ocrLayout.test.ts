@@ -21,4 +21,11 @@ describe('OCR layout mapping', () => {
   it('preserves the source document aspect ratio', () => {
     expect(getLayoutCanvasHeight(350)).toBeCloseTo(380)
   })
+
+  it('maps boxes using the real source image dimensions', () => {
+    expect(mapBboxToRelative([1200, 800, 2400, 1200], 2400, 1600)).toEqual({
+      left: 50, top: 50, width: 50, height: 25,
+    })
+    expect(getLayoutCanvasHeight(600, 2400, 1600)).toBe(400)
+  })
 })

@@ -1,4 +1,4 @@
-import type { ModelOption, OcrItem, OcrPage } from '../types/ocr'
+import type { ModelOption, OcrItem, OcrPage, OcrPolygon, OcrReviewStatus } from '../types/ocr'
 import type { OcrJobStatus, OcrTask, TaskStatus } from '../types/task'
 import type { ExportMode } from '../exportResults'
 import { apiClient } from './client'
@@ -51,10 +51,14 @@ type ApiResult = {
   text: string
   confidence: number
   bbox: [number, number, number, number]
+  polygon?: OcrPolygon | null
   display_text: string
   is_corrected: boolean
   comments: ApiComment[]
   revision: number
+  review_status?: OcrReviewStatus
+  geometry_revision?: number
+  attributes?: { source?: string }
 }
 
 type ApiCorrection = {
@@ -157,6 +161,7 @@ export function mapApiResult(result: ApiResult): OcrItem {
     text: result.text,
     score: result.confidence,
     bbox: result.bbox,
+    polygon: result.polygon || undefined,
     revision: result.revision,
     corrected: result.is_corrected ? result.display_text : undefined,
     comments: result.comments.map((comment) => ({
@@ -167,7 +172,33 @@ export function mapApiResult(result: ApiResult): OcrItem {
       time: comment.created_at,
       updatedAt: comment.updated_at,
     })),
+    reviewStatus: result.review_status || 'unreviewed',
+    editSource: result.attributes?.source === 'manual' ? 'manual' : 'ocr',
+    geometryRevision: result.geometry_revision || 0,
   }
+}
+
+export async function updateResultReviewStatus(resultIds: string[], reviewStatus: OcrReviewStatus) {
+  const response = await apiClient.post<ApiEnvelope<{ updated_count: number; items: Array<{ id: string; review_status: OcrReviewStatus }> }>>(
+    '/ocr/results/review-status',
+    { result_ids: resultIds, review_status: reviewStatus },
+  )
+  return response.data.data
+}
+
+export type ResultEditPayload = {
+  updates: Array<{ result_id: string; bbox: OcrItem['bbox']; polygon?: OcrPolygon; base_revision: number }>
+  creates: Array<{ client_id: string; bbox: OcrItem['bbox']; polygon?: OcrPolygon; text: string }>
+  deletes: Array<{ result_id: string }>
+}
+
+export async function saveResultEdits(taskId: string, pageNo: number, payload: ResultEditPayload) {
+  const response = await apiClient.post<ApiEnvelope<{
+    updated: Array<{ id: string; bbox: OcrItem['bbox']; polygon?: OcrPolygon; geometry_revision: number }>
+    created: Array<{ client_id: string; id: string }>
+    deleted: string[]
+  }>>(`/ocr/jobs/${taskId}/pages/${pageNo}/result-edits`, payload)
+  return response.data.data
 }
 
 function mapApiComment(comment: ApiComment): OcrItem['comments'][number] {

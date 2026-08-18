@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { FileSearchOutlined } from '@ant-design/icons-vue'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { isAxiosError } from 'axios'
 import { Pane, Splitpanes } from 'splitpanes'
 import 'splitpanes/dist/splitpanes.css'
-import { useRoute, useRouter } from 'vue-router'
-import type { ModelOption, OcrItem, OcrPage } from '../types/ocr'
-import { createComment, createCorrection, deleteComment, getModels, getOcrPages, releasePageImages, updateComment, uploadAndCreateOcrTask } from '../api/ocr'
+import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter, type NavigationGuardNext } from 'vue-router'
+import type { ModelOption, OcrItem, OcrPage, OcrPolygon, OcrReviewStatus } from '../types/ocr'
+import { createComment, createCorrection, deleteComment, getModels, getOcrPages, releasePageImages, saveResultEdits, updateComment, updateResultReviewStatus, uploadAndCreateOcrTask } from '../api/ocr'
 import { createSplitLayout } from '../splitLayout'
 import { exportOcrResults, type ExportMode } from '../exportResults'
 import type { ResultViewMode } from '../ocrLayout'
@@ -17,10 +17,13 @@ import OCRResultPanel from '../components/OCRResultPanel.vue'
 import CorrectionModal from '../components/CorrectionModal.vue'
 import CommentDrawer from '../components/CommentDrawer.vue'
 import OcrProgressCard from '../components/OcrProgressCard.vue'
+import UploadPreviewModal from '../components/UploadPreviewModal.vue'
+import { MAX_UPLOAD_SIZE_BYTES } from '../imageUpload'
 import { useAppSettings } from '../composables/useAppSettings'
 import { useAuth } from '../composables/useAuth'
 import { useOcrJobPolling } from '../composables/useOcrJobPolling'
 import { createEmptyWorkspaceContent } from '../workspaceState'
+import { bboxToPolygon, cloneEditableItems, polygonToBbox, type EditableOcrItem } from '../bboxEditing'
 
 type JobState = 'ready' | 'running' | 'done'
 
@@ -45,17 +48,40 @@ const workspaceWidth = ref(typeof window === 'undefined' ? 1440 : window.innerWi
 const workspace = ref<{ $el: HTMLElement }>()
 const pages = ref<OcrPage[]>(initialContent.pages)
 const selectedFile = ref<File>()
+const pendingFile = ref<File>()
+const uploadPreviewOpen = ref(false)
+const visibleResultIds = ref<string[]>()
+const lastReviewAction = ref<Array<{ id: string; status: OcrReviewStatus }>>()
+const bboxEditMode = ref(false)
+const bboxDraftItems = ref<EditableOcrItem[]>([])
+const bboxUndoStack = ref<EditableOcrItem[][]>([])
+const bboxRedoStack = ref<EditableOcrItem[][]>([])
+const bboxDirty = ref(false)
+const pendingGeometrySnapshot = ref<EditableOcrItem[]>()
+const pendingGeometryId = ref('')
+const manualBbox = ref<OcrItem['bbox']>()
+const manualText = ref('')
+const manualTextOpen = ref(false)
 let workspaceObserver: ResizeObserver | undefined
 let taskLoadSequence = 0
 const { task: polledTask, requestError: pollingError, elapsedMs, start: startPolling, stop: stopPolling, reset: resetPolling } = useOcrJobPolling()
 
 const page = computed(() => pages.value[currentPage.value - 1])
+const resultPanelPage = computed(() => page.value && bboxEditMode.value
+  ? { ...page.value, items: bboxDraftItems.value }
+  : page.value)
+const displayPage = computed(() => {
+  const activePage = resultPanelPage.value
+  if (!activePage || !visibleResultIds.value) return activePage
+  const visible = new Set(visibleResultIds.value)
+  return { ...activePage, items: activePage.items.filter(item => visible.has(item.id)) }
+})
 const selectedItem = computed(() => pages.value.flatMap((ocrPage) => ocrPage.items).find((item) => item.id === selectedId.value))
 const currentModel = computed(() => availableModels.value.find((model) => model.value === selectedModel.value))
 const splitLayout = computed(() => createSplitLayout(workspaceWidth.value))
 const selectedFileName = computed(() => selectedFile.value?.name || '请选择文件')
 const selectedFileMeta = computed(() => {
-  if (!selectedFile.value) return '支持 PDF、PNG、JPG，最大 100 MB'
+  if (!selectedFile.value) return '支持 PDF、PNG、JPG，最大 200 MB'
   const size = selectedFile.value.size < 1024 * 1024
     ? `${Math.max(1, Math.round(selectedFile.value.size / 1024))} KB`
     : `${(selectedFile.value.size / 1024 / 1024).toFixed(1)} MB`
@@ -74,6 +100,8 @@ function observeWorkspace() {
 }
 
 onMounted(async () => {
+  window.addEventListener('keydown', handleBboxKeyboard)
+  window.addEventListener('beforeunload', handleBeforeUnload)
   observeWorkspace()
   try {
     availableModels.value = await getModels()
@@ -85,10 +113,38 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleBboxKeyboard)
+  window.removeEventListener('beforeunload', handleBeforeUnload)
   stopPolling()
   workspaceObserver?.disconnect()
   releasePageImages(pages.value)
 })
+
+function handleBeforeUnload(event: BeforeUnloadEvent) {
+  if (!bboxDirty.value && !pendingGeometrySnapshot.value) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+
+function confirmBboxNavigation(next: NavigationGuardNext) {
+  if (!bboxEditMode.value || (!bboxDirty.value && !pendingGeometrySnapshot.value)) { next(); return }
+  Modal.confirm({
+    title: '存在未保存的检测框修改',
+    content: '离开后本次移动、缩放、新建和删除操作将丢失。',
+    okText: '放弃并离开', cancelText: '取消',
+    onOk: () => {
+      bboxDirty.value = false
+      bboxEditMode.value = false
+      pendingGeometrySnapshot.value = undefined
+      pendingGeometryId.value = ''
+      next()
+    },
+    onCancel: () => next(false),
+  })
+}
+
+onBeforeRouteUpdate((_to, _from, next) => confirmBboxNavigation(next))
+onBeforeRouteLeave((_to, _from, next) => confirmBboxNavigation(next))
 
 function ensureTaskModel(task: NonNullable<typeof polledTask.value>): void {
   if (!availableModels.value.some((model) => model.value === task.modelId)) {
@@ -176,13 +232,200 @@ watch([taskLoading, page], async ([loading, activePage]) => {
 })
 
 function selectItem(id: string) {
+  if (pendingGeometrySnapshot.value && pendingGeometryId.value !== id) {
+    message.warning('请先确认或取消当前检测框修改')
+    return
+  }
   selectedId.value = id
   nextTick(() => document.querySelector(`[data-result-id="${id}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }))
 }
 
 function switchPage(no: number) {
+  if (bboxEditMode.value && (bboxDirty.value || pendingGeometrySnapshot.value)) {
+    message.warning('请先保存或退出检测框编辑模式')
+    return
+  }
   currentPage.value = no
+  visibleResultIds.value = undefined
   selectedId.value = pages.value[no - 1].items[0]?.id || ''
+}
+
+function pushBboxHistory() {
+  bboxUndoStack.value.push(cloneEditableItems(bboxDraftItems.value))
+  if (bboxUndoStack.value.length > 50) bboxUndoStack.value.shift()
+  bboxRedoStack.value = []
+}
+
+function toggleBboxEdit() {
+  if (!bboxEditMode.value) {
+    if (!page.value) return
+    bboxDraftItems.value = cloneEditableItems(page.value.items.map(item => ({ ...item, editSource: 'ocr', editOperation: 'unchanged', geometryRevision: (item as EditableOcrItem).geometryRevision || 0 })))
+    bboxUndoStack.value = []
+    bboxRedoStack.value = []
+    bboxDirty.value = false
+    pendingGeometrySnapshot.value = undefined
+    pendingGeometryId.value = ''
+    bboxEditMode.value = true
+    return
+  }
+  if (!bboxDirty.value && !pendingGeometrySnapshot.value) { bboxEditMode.value = false; return }
+  Modal.confirm({
+    title: '放弃未保存的检测框修改？', content: '移动、缩放、新建和删除操作都将丢失。',
+    okText: '放弃修改', cancelText: '继续编辑', onOk: () => {
+      bboxEditMode.value = false
+      bboxDirty.value = false
+      pendingGeometrySnapshot.value = undefined
+      pendingGeometryId.value = ''
+    },
+  })
+}
+
+function previewDraftPolygon(id: string, polygon: OcrPolygon) {
+  const item = bboxDraftItems.value.find(value => value.id === id)
+  if (!item) return
+  if (!pendingGeometrySnapshot.value) {
+    pendingGeometrySnapshot.value = cloneEditableItems(bboxDraftItems.value)
+    pendingGeometryId.value = id
+  }
+  if (pendingGeometryId.value !== id) return
+  item.polygon = polygon
+  item.bbox = polygonToBbox(polygon, page.value?.sourceWidth || 700, page.value?.sourceHeight || 760)
+}
+
+function confirmGeometryEdit() {
+  const snapshot = pendingGeometrySnapshot.value
+  const item = bboxDraftItems.value.find(value => value.id === pendingGeometryId.value)
+  const original = snapshot?.find(value => value.id === pendingGeometryId.value)
+  if (!snapshot || !item || !original) return
+  bboxUndoStack.value.push(snapshot)
+  if (bboxUndoStack.value.length > 50) bboxUndoStack.value.shift()
+  bboxRedoStack.value = []
+  item.originalBbox ||= [...original.bbox] as OcrItem['bbox']
+  item.originalPolygon ||= original.polygon?.map(point => [...point]) as OcrPolygon | undefined
+  if (item.editOperation !== 'created') item.editOperation = 'updated'
+  bboxDirty.value = true
+  pendingGeometrySnapshot.value = undefined
+  pendingGeometryId.value = ''
+  message.success('当前检测框已确认，请点击“保存全部”提交修改')
+}
+
+function cancelGeometryEdit() {
+  if (!pendingGeometrySnapshot.value) return
+  bboxDraftItems.value = pendingGeometrySnapshot.value
+  pendingGeometrySnapshot.value = undefined
+  pendingGeometryId.value = ''
+  message.info('已取消当前检测框调整')
+}
+
+function beginManualBbox(bbox: OcrItem['bbox']) {
+  manualBbox.value = bbox
+  manualText.value = ''
+  manualTextOpen.value = true
+}
+
+function confirmManualBbox() {
+  const text = manualText.value.trim()
+  if (!text || !manualBbox.value) { message.warning('请填写新检测框的文字内容'); return }
+  pushBboxHistory()
+  const id = `draft-${crypto.randomUUID()}`
+  bboxDraftItems.value.push({
+    id, text, score: 1, bbox: manualBbox.value, polygon: bboxToPolygon(manualBbox.value), comments: [], reviewStatus: 'unreviewed',
+    editSource: 'manual', editOperation: 'created', geometryRevision: 0,
+  })
+  selectedId.value = id
+  bboxDirty.value = true
+  manualTextOpen.value = false
+  manualBbox.value = undefined
+}
+
+function undoBboxEdit() {
+  if (pendingGeometrySnapshot.value) { message.warning('请先确认或取消当前检测框修改'); return }
+  const previous = bboxUndoStack.value.pop()
+  if (!previous) return
+  bboxRedoStack.value.push(cloneEditableItems(bboxDraftItems.value))
+  bboxDraftItems.value = previous
+  bboxDirty.value = true
+}
+
+function redoBboxEdit() {
+  if (pendingGeometrySnapshot.value) { message.warning('请先确认或取消当前检测框修改'); return }
+  const next = bboxRedoStack.value.pop()
+  if (!next) return
+  bboxUndoStack.value.push(cloneEditableItems(bboxDraftItems.value))
+  bboxDraftItems.value = next
+  bboxDirty.value = true
+}
+
+function deleteSelectedDraft() {
+  if (pendingGeometrySnapshot.value) { message.warning('请先确认或取消当前检测框修改'); return }
+  const index = bboxDraftItems.value.findIndex(item => item.id === selectedId.value)
+  if (index < 0) return
+  pushBboxHistory()
+  const item = bboxDraftItems.value[index]
+  if (item.editOperation === 'created') bboxDraftItems.value.splice(index, 1)
+  else { item.editOperation = 'deleted'; item.reviewStatus = 'deleted' }
+  selectedId.value = ''
+  bboxDirty.value = true
+}
+
+function handleBboxKeyboard(event: KeyboardEvent) {
+  if (!bboxEditMode.value || ['INPUT', 'TEXTAREA'].includes((event.target as HTMLElement)?.tagName)) return
+  if ((event.key === 'Delete' || event.key === 'Backspace') && selectedId.value) { event.preventDefault(); deleteSelectedDraft() }
+  else if (event.ctrlKey && event.key.toLowerCase() === 'z' && !event.shiftKey) { event.preventDefault(); undoBboxEdit() }
+  else if (event.ctrlKey && (event.key.toLowerCase() === 'y' || (event.shiftKey && event.key.toLowerCase() === 'z'))) { event.preventDefault(); redoBboxEdit() }
+}
+
+async function saveBboxEdits() {
+  const taskId = route.params.taskId
+  if (typeof taskId !== 'string' || !page.value) return
+  if (pendingGeometrySnapshot.value) { message.warning('请先确认或取消当前检测框修改'); return }
+  const updates = bboxDraftItems.value.filter(item => item.editOperation === 'updated').map(item => ({ result_id: item.id, bbox: item.bbox, polygon: item.polygon, base_revision: item.geometryRevision || 0 }))
+  const creates = bboxDraftItems.value.filter(item => item.editOperation === 'created').map(item => ({ client_id: item.id, bbox: item.bbox, polygon: item.polygon, text: item.text }))
+  const deletes = bboxDraftItems.value.filter(item => item.editOperation === 'deleted' && item.editSource !== 'manual').map(item => ({ result_id: item.id }))
+  try {
+    await saveResultEdits(taskId, page.value.no, { updates, creates, deletes })
+    const refreshed = await getOcrPages(taskId)
+    releasePageImages(pages.value)
+    pages.value = refreshed
+    bboxEditMode.value = false
+    bboxDirty.value = false
+    bboxUndoStack.value = []
+    bboxRedoStack.value = []
+    message.success('检测框修改已保存')
+  } catch (error) {
+    message.error(isAxiosError(error) && error.response?.status === 409 ? '检测框已被其他用户修改，请刷新后重试' : '检测框修改保存失败')
+  }
+}
+
+async function reviewResults(ids: string[], status: OcrReviewStatus) {
+  const changed = pages.value.flatMap(ocrPage => ocrPage.items).filter(item => ids.includes(item.id))
+  if (!changed.length) return
+  const previous = changed.map(item => ({ id: item.id, status: item.reviewStatus || 'unreviewed' as OcrReviewStatus }))
+  try {
+    await updateResultReviewStatus(ids, status)
+    changed.forEach(item => { item.reviewStatus = status })
+    lastReviewAction.value = previous
+    message.success(status === 'deleted' ? `已删除 ${changed.length} 条结果` : status === 'false_positive' ? `已标记 ${changed.length} 条误检` : `已恢复 ${changed.length} 条结果`)
+  } catch {
+    message.error('结果状态保存失败，请重试')
+  }
+}
+
+async function undoReviewAction() {
+  const action = lastReviewAction.value
+  if (!action) return
+  try {
+    for (const status of ['unreviewed', 'confirmed', 'false_positive', 'deleted'] as OcrReviewStatus[]) {
+      const ids = action.filter(item => item.status === status).map(item => item.id)
+      if (ids.length) await updateResultReviewStatus(ids, status)
+    }
+    for (const pageItem of pages.value.flatMap(ocrPage => ocrPage.items)) {
+      const previous = action.find(item => item.id === pageItem.id)
+      if (previous) pageItem.reviewStatus = previous.status
+    }
+    lastReviewAction.value = undefined
+    message.success('已撤销上一次结果操作')
+  } catch { message.error('撤销失败，请重试') }
 }
 
 async function runOcr() {
@@ -263,14 +506,32 @@ async function removeComment(commentId: string) {
   finally { reviewSaving.value = false }
 }
 function handleUpload(file: File) {
-  if (file.size > 100 * 1024 * 1024) {
-    message.error('文件不能超过 100 MB')
+  if (file.size > MAX_UPLOAD_SIZE_BYTES) {
+    message.error('文件不能超过 200 MB')
     return
   }
+  pendingFile.value = file
+  uploadPreviewOpen.value = true
+}
+function previewUpload() {
+  if (!selectedFile.value) return
+  pendingFile.value = selectedFile.value
+  uploadPreviewOpen.value = true
+}
+function saveUpload(file: File) {
   selectedFile.value = file
+  pendingFile.value = undefined
+  uploadPreviewOpen.value = false
   jobState.value = 'ready'
   progress.value = 0
-  message.success(`已载入文件：${file.name}`)
+  message.success(`文件已保存：${file.name}`)
+}
+function deleteUpload() {
+  pendingFile.value = undefined
+  selectedFile.value = undefined
+  uploadPreviewOpen.value = false
+  jobState.value = 'ready'
+  progress.value = 0
 }
 async function handleExport(mode: ExportMode) {
   try {
@@ -285,17 +546,17 @@ async function handleExport(mode: ExportMode) {
 
 <template>
   <div class="workspace-view">
-    <UploadPanel :models="availableModels" :selected-model="selectedModel" :current-model="currentModel" :job-state="jobState" :progress="progress" :file-name="selectedFileName" :file-meta="selectedFileMeta" @update:selected-model="selectedModel = $event" @upload="handleUpload" @run="runOcr" />
+    <UploadPanel :models="availableModels" :selected-model="selectedModel" :current-model="currentModel" :job-state="jobState" :progress="progress" :file-name="selectedFileName" :file-meta="selectedFileMeta" :has-file="Boolean(selectedFile)" @update:selected-model="selectedModel = $event" @upload="handleUpload" @preview="previewUpload" @run="runOcr" />
     <div v-if="taskLoading" class="workspace-empty"><a-spin size="large" /><p>正在加载任务数据…</p></div>
     <OcrProgressCard v-else-if="polledTask && !['succeeded', 'partial_success'].includes(polledTask.jobStatus || 'queued')" :task="polledTask" :elapsed-ms="elapsedMs" :request-failed="Boolean(pollingError)" @retry="retryTask" />
     <Splitpanes v-else-if="page" ref="workspace" class="workspace">
       <Pane :size="splitLayout.documentSizePercent" :min-size="splitLayout.documentMinPercent">
         <div class="document-workspace">
-          <DocumentViewer :pages="pages" :page="page" :current-page="currentPage" :selected-id="selectedId" :zoom="zoom" :job-state="jobState" :progress="progress" @page-change="switchPage" @select="selectItem" @zoom-change="zoom = $event" />
+          <DocumentViewer v-if="displayPage" :pages="pages" :page="displayPage" :current-page="currentPage" :selected-id="selectedId" :zoom="zoom" :job-state="jobState" :progress="progress" :edit-mode="bboxEditMode" :can-undo="Boolean(bboxUndoStack.length) && !pendingGeometrySnapshot" :can-redo="Boolean(bboxRedoStack.length) && !pendingGeometrySnapshot" :has-unsaved-changes="bboxDirty" :has-pending-geometry="Boolean(pendingGeometrySnapshot)" @page-change="switchPage" @select="selectItem" @zoom-change="zoom = $event" @edit-toggle="toggleBboxEdit" @undo="undoBboxEdit" @redo="redoBboxEdit" @save="saveBboxEdits" @polygon-preview="previewDraftPolygon" @geometry-confirm="confirmGeometryEdit" @geometry-cancel="cancelGeometryEdit" @create-bbox="beginManualBbox" />
         </div>
       </Pane>
       <Pane :size="splitLayout.resultSizePercent" :min-size="splitLayout.resultMinPercent">
-        <OCRResultPanel :page="page" :pages="pages" :selected-id="selectedId" :model-label="currentModel?.label || selectedModel" :low-confidence-threshold="settings.lowConfidenceThreshold" :show-confidence="settings.showConfidence" v-model:view-mode="resultViewMode" @select="selectItem" @correct="openCorrection" @comment="openComment" @export="handleExport" />
+        <OCRResultPanel v-if="resultPanelPage" :page="resultPanelPage" :pages="pages" :selected-id="selectedId" :model-label="currentModel?.label || selectedModel" :low-confidence-threshold="settings.lowConfidenceThreshold" :show-confidence="settings.showConfidence" :can-undo-review="Boolean(lastReviewAction)" v-model:view-mode="resultViewMode" @select="selectItem" @correct="openCorrection" @comment="openComment" @export="handleExport" @review="reviewResults" @visible-change="visibleResultIds = $event" @undo="undoReviewAction" />
       </Pane>
     </Splitpanes>
     <div v-else class="workspace-empty">
@@ -306,5 +567,10 @@ async function handleExport(mode: ExportMode) {
     </div>
     <CorrectionModal v-model:open="correctionOpen" :item="selectedItem" :saving="reviewSaving" @save="saveCorrection" />
     <CommentDrawer v-model:open="commentOpen" :item="selectedItem" :current-user-id="user?.id" :saving="reviewSaving" @save="saveComment" @update-comment="editComment" @delete-comment="removeComment" />
+    <UploadPreviewModal :open="uploadPreviewOpen" :file="pendingFile" @close="uploadPreviewOpen = false" @delete="deleteUpload" @save="saveUpload" />
+    <a-modal v-model:open="manualTextOpen" title="填写新检测框文字" ok-text="添加检测框" cancel-text="取消" :mask-closable="false" @ok="confirmManualBbox">
+      <a-input v-model:value="manualText" :maxlength="500" show-count placeholder="请输入该区域的文字内容" @press-enter="confirmManualBbox" />
+      <p class="modal-hint">新框由人工创建，不会触发 OCR；保存后将显示“人工新增”。</p>
+    </a-modal>
   </div>
 </template>

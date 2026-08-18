@@ -1,4 +1,5 @@
 import type { OcrItem } from './types/ocr'
+import { exportableOcrItems } from './resultVisibility'
 
 export type ExportMode = 'simple' | 'full'
 
@@ -21,14 +22,14 @@ function formatIndex(index: number) {
 }
 
 export function createSimpleExportRows(items: OcrItem[]): SimpleExportRow[] {
-  return items.map((item, index) => ({
+  return exportableOcrItems(items).map((item, index) => ({
     编号: formatIndex(index),
     端子排最终识别结果: item.corrected || item.text,
   }))
 }
 
 export function createFullExportRows(items: OcrItem[]): FullExportRow[] {
-  return items.flatMap((item, index) => {
+  return exportableOcrItems(items).flatMap((item, index) => {
     const baseRow = {
       编号: formatIndex(index),
       原始识别结果: item.text,

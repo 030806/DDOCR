@@ -12,7 +12,7 @@ export function normalizeSettings(value: unknown): AppSettings {
     defaultResultViewMode: candidate.defaultResultViewMode === 'layout' ? 'layout' : 'list',
     showConfidence: typeof candidate.showConfidence === 'boolean' ? candidate.showConfidence : DEFAULT_APP_SETTINGS.showConfidence,
     defaultExportMode: candidate.defaultExportMode === 'full' ? 'full' : 'simple',
-    defaultZoom: typeof candidate.defaultZoom === 'number' && candidate.defaultZoom >= 0.55 && candidate.defaultZoom <= 1.15 ? candidate.defaultZoom : DEFAULT_APP_SETTINGS.defaultZoom,
+    defaultZoom: typeof candidate.defaultZoom === 'number' && candidate.defaultZoom >= 0.55 && candidate.defaultZoom <= 3 ? candidate.defaultZoom : DEFAULT_APP_SETTINGS.defaultZoom,
   }
 }
 

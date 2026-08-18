@@ -189,6 +189,23 @@ result_count, review_count, created_by{id,name}, error
 
 可选扩展字段：`normalized_polygon, angle, attributes`。若单页超过约 5000 项，可提供 gzip/轻量完整框响应，不能用普通分页导致画布漏框。
 
+### 6.3 结果复核状态
+
+`POST /api/v1/ocr/results/review-status` 批量更新结果状态，请求体为
+`result_ids` 和 `review_status`。状态支持 `unreviewed | confirmed | false_positive | deleted`。
+接口按当前用户校验所有结果归属并在同一事务内更新；重复提交同一状态是幂等的。
+`false_positive` 和 `deleted` 都是可恢复的软状态，所有服务端导出必须排除这两类结果。
+
+### 6.4 检测框批量编辑
+
+`POST /api/v1/ocr/jobs/{job_id}/pages/{page_no}/result-edits` 在一个事务中保存已有框坐标更新、人工新建框和软删除。请求包含 `updates[{result_id,bbox,polygon?,base_revision}]`、`creates[{client_id,bbox,polygon?,text}]` 和 `deletes[{result_id}]`。
+
+- 新框文字必填且不触发 OCR，服务端以 `attributes.source=manual` 标记来源。
+- bbox 使用原图像素坐标 `[x1,y1,x2,y2]`，必须位于页面内且最小为 4×4 px。
+- polygon 为可选的四点原图像素坐标，点序为左上、右上、右下、左下。提供 polygon 时服务端保存真实四点，并根据四点 min/max 重新计算 bbox；不提供时服务端根据 bbox 生成水平四边形，保持旧客户端兼容。
+- 坐标更新使用 `geometry_revision` 乐观锁，冲突返回 `409 GEOMETRY_REVISION_CONFLICT`。
+- 所有操作写入 `result_geometry_revisions` 审计表；删除沿用 `review_status=deleted`，不会进入导出。
+
 ## 7. 人工纠正
 
 以下纠正和留言接口要求 `Authorization: Bearer <access_token>`；创建人/作者

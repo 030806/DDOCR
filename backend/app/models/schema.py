@@ -263,11 +263,29 @@ results = Table(
     Column("attributes", JSON_VALUE, nullable=False, server_default="{}"),
     Column("current_revision", Integer, nullable=False, server_default="0"),
     Column("current_correction", JSON_VALUE),
+    Column("review_status", String(32), nullable=False, server_default="unreviewed"),
+    Column("geometry_revision", Integer, nullable=False, server_default="0"),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     CheckConstraint("confidence BETWEEN 0 AND 1", name="ck_ocr_results_confidence"),
     CheckConstraint("bbox_x2 >= bbox_x1 AND bbox_y2 >= bbox_y1", name="ck_ocr_results_bbox"),
+    CheckConstraint("review_status IN ('unreviewed', 'confirmed', 'false_positive', 'deleted')", name="ck_results_review_status"),
 )
 Index("ix_results_page_order", results.c.page_id, results.c.reading_order)
+
+result_geometry_revisions = Table(
+    "result_geometry_revisions", Base.metadata,
+    id_column(),
+    Column("result_id", String(36), ForeignKey("results.id", ondelete="CASCADE"), nullable=False),
+    Column("revision", Integer, nullable=False),
+    Column("base_revision", Integer, nullable=False),
+    Column("previous_bbox", JSON_VALUE),
+    Column("bbox", JSON_VALUE),
+    Column("operation", String(32), nullable=False),
+    Column("user_id", String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    UniqueConstraint("result_id", "revision", name="uq_result_geometry_revision"),
+)
+Index("ix_result_geometry_result_created", result_geometry_revisions.c.result_id, result_geometry_revisions.c.created_at)
 
 corrections = Table(
     "corrections", Base.metadata,

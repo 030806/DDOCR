@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import JSON, Index, String, create_engine, select
+from sqlalchemy import JSON, Index, String, create_engine, inspect, select, text
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
@@ -32,6 +32,26 @@ class Store:
         # schemas are always managed explicitly through Alembic.
         if self.engine.dialect.name == "sqlite":
             Base.metadata.create_all(self.engine)
+            self._upgrade_legacy_sqlite_schema()
+
+    def _upgrade_legacy_sqlite_schema(self) -> None:
+        """Apply additive compatibility upgrades to create_all-managed local DBs."""
+        inspector = inspect(self.engine)
+        if "results" not in inspector.get_table_names():
+            return
+        result_columns = {column["name"] for column in inspector.get_columns("results")}
+        if "review_status" not in result_columns:
+            with self.engine.begin() as connection:
+                connection.execute(text(
+                    "ALTER TABLE results ADD COLUMN review_status VARCHAR(32) "
+                    "NOT NULL DEFAULT 'unreviewed'"
+                ))
+        if "geometry_revision" not in result_columns:
+            with self.engine.begin() as connection:
+                connection.execute(text(
+                    "ALTER TABLE results ADD COLUMN geometry_revision INTEGER "
+                    "NOT NULL DEFAULT 0"
+                ))
 
     def put(
         self,

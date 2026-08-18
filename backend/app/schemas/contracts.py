@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 class UploadSessionCreate(BaseModel):
     file_name: str = Field(min_length=1, max_length=255)
-    size_bytes: int = Field(ge=0, le=104_857_600)
+    size_bytes: int = Field(ge=0, le=209_715_200)
     media_type: str
     sha256: str | None = None
 
@@ -29,6 +29,41 @@ class CommentCreate(BaseModel):
 
 class CommentUpdate(CommentCreate):
     pass
+
+
+class ResultReviewStatusUpdate(BaseModel):
+    result_ids: list[str] = Field(min_length=1, max_length=500)
+    review_status: Literal["unreviewed", "confirmed", "false_positive", "deleted"]
+
+
+class ResultGeometryUpdate(BaseModel):
+    result_id: str
+    bbox: tuple[float, float, float, float]
+    polygon: tuple[
+        tuple[float, float], tuple[float, float],
+        tuple[float, float], tuple[float, float],
+    ] | None = None
+    base_revision: int = Field(ge=0)
+
+
+class ManualResultCreate(BaseModel):
+    client_id: str
+    bbox: tuple[float, float, float, float]
+    polygon: tuple[
+        tuple[float, float], tuple[float, float],
+        tuple[float, float], tuple[float, float],
+    ] | None = None
+    text: str = Field(min_length=1, max_length=500)
+
+
+class ResultDelete(BaseModel):
+    result_id: str
+
+
+class ResultEditsCreate(BaseModel):
+    updates: list[ResultGeometryUpdate] = Field(default_factory=list, max_length=500)
+    creates: list[ManualResultCreate] = Field(default_factory=list, max_length=500)
+    deletes: list[ResultDelete] = Field(default_factory=list, max_length=500)
 
 
 class ExportCreate(BaseModel):

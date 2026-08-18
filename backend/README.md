@@ -32,6 +32,10 @@ python -m alembic upgrade head
 python -m alembic current
 ```
 
+本地默认 SQLite 数据库历史上由 `create_all()` 管理，没有 Alembic 版本记录。应用启动时会对这类本地数据库执行仅新增字段的兼容检查（当前包括 `results.review_status`），保护已有任务数据；PostgreSQL 及正式部署仍必须执行 Alembic 迁移。
+
+检测框编辑功能新增 `results.geometry_revision` 和 `result_geometry_revisions`。正式环境升级后需执行 `python -m alembic upgrade head`；本地 SQLite 会在启动时补齐兼容字段并创建审计表。
+
 ## 启动与测试
 
 ```powershell

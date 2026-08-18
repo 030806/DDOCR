@@ -7,15 +7,28 @@ export type OcrComment = {
   updatedAt?: string | null
 }
 
+export type OcrPolygon = [
+  [number, number],
+  [number, number],
+  [number, number],
+  [number, number],
+]
+
 export type OcrItem = {
   id: string
   text: string
   score: number
   bbox: [number, number, number, number]
+  polygon?: OcrPolygon
   revision?: number
   corrected?: string
   comments: OcrComment[]
+  reviewStatus?: OcrReviewStatus
+  editSource?: 'ocr' | 'manual'
+  geometryRevision?: number
 }
+
+export type OcrReviewStatus = 'unreviewed' | 'confirmed' | 'false_positive' | 'deleted'
 
 export type OcrPage = {
   no: number

@@ -31,4 +31,13 @@ describe('OCR Excel export rows', () => {
   it('keeps one row with blank review fields when there are no comments', () => {
     expect(createFullExportRows(items)[2]).toEqual({ 编号: '02', 原始识别结果: 'X23', 纠正结果: '', 最终识别结果: 'X23', 留言人: '', 留言结果: '' })
   })
+
+  it('does not export deleted or false-positive results', () => {
+    const excluded = [
+      { ...items[0], reviewStatus: 'deleted' as const },
+      { ...items[1], reviewStatus: 'false_positive' as const },
+    ]
+    expect(createSimpleExportRows(excluded)).toEqual([])
+    expect(createFullExportRows(excluded)).toEqual([])
+  })
 })

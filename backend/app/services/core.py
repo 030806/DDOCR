@@ -27,7 +27,7 @@ from app.schemas.contracts import (
 )
 from app.utils.common import now, uid
 
-MAX_FILE_SIZE_BYTES = 104_857_600
+MAX_FILE_SIZE_BYTES = 209_715_200
 
 
 class MockOcrService:
@@ -485,6 +485,89 @@ class MockOcrService:
             "comments": comments,
         }
 
+    def update_result_review_status(
+        self, result_ids: list[str], review_status: str, owner_id: str,
+    ) -> list[dict[str, str]]:
+        unique_ids = list(dict.fromkeys(result_ids))
+        for result_id in unique_ids:
+            self.result(result_id, owner_id)
+        self.result_repository.update_review_status(unique_ids, review_status)
+        return [{"id": result_id, "review_status": review_status} for result_id in unique_ids]
+
+    @staticmethod
+    def _validated_bbox(bbox: Any, width: float, height: float) -> list[float]:
+        values = [float(value) for value in bbox]
+        x1, y1, x2, y2 = values
+        if not (0 <= x1 < x2 <= width and 0 <= y1 < y2 <= height):
+            raise HTTPException(422, "BBox must be inside the page and have positive size")
+        if x2 - x1 < 4 or y2 - y1 < 4:
+            raise HTTPException(422, "BBox minimum size is 4 x 4 pixels")
+        return values
+
+    @classmethod
+    def _validated_geometry(
+        cls, bbox: Any, polygon: Any, width: float, height: float,
+    ) -> tuple[list[float], list[list[float]]]:
+        if polygon is None:
+            values = cls._validated_bbox(bbox, width, height)
+            return values, [
+                [values[0], values[1]], [values[2], values[1]],
+                [values[2], values[3]], [values[0], values[3]],
+            ]
+        points = [[float(point[0]), float(point[1])] for point in polygon]
+        if any(not (0 <= point[0] <= width and 0 <= point[1] <= height) for point in points):
+            raise HTTPException(422, "Polygon points must be inside the page")
+        xs = [point[0] for point in points]
+        ys = [point[1] for point in points]
+        compatible_bbox = cls._validated_bbox(
+            [min(xs), min(ys), max(xs), max(ys)], width, height,
+        )
+        twice_area = abs(sum(
+            point[0] * points[(index + 1) % 4][1]
+            - points[(index + 1) % 4][0] * point[1]
+            for index, point in enumerate(points)
+        ))
+        if twice_area < 32:
+            raise HTTPException(422, "Polygon area is too small")
+        return compatible_bbox, points
+
+    def save_result_edits(
+        self, job_id: str, page_no: int, body: Any, owner_id: str,
+    ) -> dict[str, Any]:
+        job = self.job(job_id, owner_id)
+        page = None
+        for page_id in job["page_ids"]:
+            candidate = self.page(page_id)
+            if candidate and candidate["page_no"] == page_no:
+                page = candidate
+                break
+        if page is None:
+            raise HTTPException(404, "Page not found")
+        image = page["image"]
+        width, height = float(image["width_px"]), float(image["height_px"])
+        updates = []
+        for item in body.updates:
+            bbox, polygon = self._validated_geometry(item.bbox, item.polygon, width, height)
+            updates.append({**item.model_dump(), "bbox": bbox, "polygon": polygon, "revision_id": uid()})
+        creates = []
+        for item in body.creates:
+            bbox, polygon = self._validated_geometry(item.bbox, item.polygon, width, height)
+            creates.append({
+                **item.model_dump(), "id": uid(), "bbox": bbox, "polygon": polygon,
+                "revision_id": uid(), "text": item.text.strip(),
+            })
+        if any(not item["text"] for item in creates):
+            raise HTTPException(422, "Manual result text is required")
+        deletes = [{**item.model_dump(), "revision_id": uid()} for item in body.deletes]
+        try:
+            return self.result_repository.apply_edits(
+                page=page, updates=updates, creates=creates, deletes=deletes, user_id=owner_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(404, "OCR result not found") from exc
+        except ValueError as exc:
+            raise HTTPException(409, {"code": "GEOMETRY_REVISION_CONFLICT", "result_id": str(exc)}) from exc
+
     def add_correction(
         self,
         result_id: str,
@@ -655,6 +738,8 @@ class MockOcrService:
                 continue
             for result_id in page["result_ids"]:
                 result = self.public_result(self.result(result_id))
+                if result.get("review_status") in {"deleted", "false_positive"}:
+                    continue
                 item_index += 1
                 if mode == "simple":
                     worksheet.append([str(item_index).zfill(2), result["display_text"]])

@@ -1,10 +1,31 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apiClient } from './client'
-import { createComment, createCorrection, deleteComment, exportTaskResults, getModels, getOcrPages, mapApiJob, mapApiResult, updateComment, uploadAndCreateOcrTask } from './ocr'
+import { createComment, createCorrection, deleteComment, exportTaskResults, getModels, getOcrPages, mapApiJob, mapApiResult, saveResultEdits, updateComment, updateResultReviewStatus, uploadAndCreateOcrTask } from './ocr'
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('OCR API adapters', () => {
+  it('persists batch result review status', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({
+      data: { data: { updated_count: 2, items: [] }, request_id: 'req-review' },
+    } as never)
+    const result = await updateResultReviewStatus(['r1', 'r2'], 'false_positive')
+    expect(post).toHaveBeenCalledWith('/ocr/results/review-status', { result_ids: ['r1', 'r2'], review_status: 'false_positive' })
+    expect(result.updated_count).toBe(2)
+  })
+
+  it('saves page result geometry edits in one request', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({ data: { data: { updated: [], created: [], deleted: [] }, request_id: 'req-edit' } } as never)
+    const payload = {
+      updates: [{
+        result_id: 'r1', bbox: [1, 2, 32, 42] as [number, number, number, number],
+        polygon: [[2, 4], [30, 2], [32, 40], [1, 42]] as [[number, number], [number, number], [number, number], [number, number]],
+        base_revision: 0,
+      }], creates: [], deletes: [],
+    }
+    await saveResultEdits('job-1', 1, payload)
+    expect(post).toHaveBeenCalledWith('/ocr/jobs/job-1/pages/1/result-edits', payload)
+  })
   it('maps a FastAPI job to the existing task view model', () => {
     const task = mapApiJob({
       id: 'job-1', name: 'terminal', file_name: 'terminal.png',
@@ -17,14 +38,16 @@ describe('OCR API adapters', () => {
     expect(task.regionCount).toBe(3)
   })
 
-  it('maps confidence and bbox without changing OCR values', () => {
+  it('maps confidence, bbox and polygon without changing OCR values', () => {
     const item = mapApiResult({
       id: 'result-1', text: 'QF10I', confidence: 0.884,
       bbox: [620, 240, 940, 320], display_text: 'QF10I',
+      polygon: [[620, 245], [935, 240], [940, 315], [625, 320]],
       is_corrected: false, comments: [], revision: 0,
     })
     expect(item.score).toBe(0.884)
     expect(item.bbox).toEqual([620, 240, 940, 320])
+    expect(item.polygon).toEqual([[620, 245], [935, 240], [940, 315], [625, 320]])
     expect(item.text).toBe('QF10I')
   })
 
