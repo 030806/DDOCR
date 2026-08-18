@@ -109,6 +109,28 @@ HTTP 错误：400 参数错误、401 未登录、403 无权限、404 不存在�
 
 响应包含 `id, status, stage, progress, created_at`。
 
+### 区域 OCR 任务
+
+`POST /api/v1/ocr/region-jobs` 创建独立区域 OCR 任务，成功返回 `202 Accepted`。该接口不修改普通任务创建接口，也不会修改来源任务结果。首期仅支持单页 PNG/JPG 图片，每页最多 20 个区域。
+
+请求必须在 `file_id` 与 `source_job_id` 中二选一。使用 `file_id` 表示从刚上传并完成校验的文件创建；使用 `source_job_id` 表示复用一个 `succeeded` 或 `partial_success` 任务的原文件：
+
+```json
+{
+  "name": "端子排-区域识别",
+  "source_job_id": "019-source-job",
+  "model_id": "mock",
+  "model_version": "1.0.0",
+  "pages": [{"page_no": 1, "regions": [
+    {"client_id": "roi-1", "bbox": [320, 180, 980, 760]}
+  ]}]
+}
+```
+
+区域 bbox 使用原图像素坐标 `[x1,y1,x2,y2]`，必须完全位于图片内，宽高均不得小于 16 px。新任务复用原文件但生成独立 Job、Page 和 Result；来源任务状态、识别结果、纠正和留言保持不变。
+
+`GET /api/v1/ocr/region-jobs/{job_id}/context` 返回区域任务来源和创建时固化的范围。任务创建后继续使用现有 `/ocr/jobs/{job_id}`、页面结果、纠正、留言和导出接口。原文件不可用返回 `409 SOURCE_FILE_UNAVAILABLE`；来源任务未完成返回 409；非法页面、模型或 bbox 返回 422。
+
 ### 5.2 列表与详情
 
 `GET /api/v1/ocr/jobs` 支持：`query`（任务名/文件名）、`status`（多值）、`sort=created_at|-created_at`、`cursor`、`limit`（默认 20，最大 100）。

@@ -207,6 +207,33 @@ ocr_jobs = Table(
 Index("ix_ocr_jobs_tenant_status_created", ocr_jobs.c.tenant_id, ocr_jobs.c.status, ocr_jobs.c.created_at)
 Index("ix_ocr_jobs_user_created", ocr_jobs.c.user_id, ocr_jobs.c.created_at)
 
+ocr_region_job_scopes = Table(
+    "ocr_region_job_scopes", Base.metadata,
+    Column("job_id", String(36), ForeignKey("ocr_jobs.id", ondelete="CASCADE"), primary_key=True),
+    Column("source_job_id", String(36), ForeignKey("ocr_jobs.id", ondelete="SET NULL")),
+    Column("file_id", String(36), ForeignKey("files.id", ondelete="RESTRICT"), nullable=False),
+    Column("region_count", Integer, nullable=False),
+    Column("created_by", String(36), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    CheckConstraint("region_count > 0", name="ck_region_job_scopes_count"),
+)
+Index("ix_region_job_scopes_source", ocr_region_job_scopes.c.source_job_id)
+
+ocr_job_regions = Table(
+    "ocr_job_regions", Base.metadata,
+    id_column(),
+    Column("job_id", String(36), ForeignKey("ocr_jobs.id", ondelete="CASCADE"), nullable=False),
+    Column("page_no", Integer, nullable=False),
+    Column("client_id", String(100), nullable=False),
+    Column("bbox", JSON_VALUE, nullable=False),
+    Column("reading_order", Integer, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    UniqueConstraint("job_id", "client_id", name="uq_ocr_job_regions_client"),
+    UniqueConstraint("job_id", "page_no", "reading_order", name="uq_ocr_job_regions_order"),
+    CheckConstraint("page_no > 0", name="ck_ocr_job_regions_page_no"),
+)
+Index("ix_ocr_job_regions_job_page", ocr_job_regions.c.job_id, ocr_job_regions.c.page_no)
+
 job_pages = Table(
     "job_pages", Base.metadata,
     id_column(),

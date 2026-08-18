@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apiClient } from './client'
-import { createComment, createCorrection, deleteComment, exportTaskResults, getModels, getOcrPages, mapApiJob, mapApiResult, saveResultEdits, updateComment, updateResultReviewStatus, uploadAndCreateOcrTask } from './ocr'
+import { createComment, createCorrection, createRegionOcrTask, deleteComment, exportTaskResults, getModels, getOcrPages, mapApiJob, mapApiResult, saveResultEdits, updateComment, updateResultReviewStatus, uploadAndCreateOcrTask } from './ocr'
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
@@ -123,6 +123,23 @@ describe('OCR API adapters', () => {
       note: '服务器模型', speed: '20 ms/页',
     }])
     expect(apiClient.get).toHaveBeenCalledWith('/models', { params: { status: 'available' } })
+  })
+
+  it('creates an independent region OCR job with source-image bboxes', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: { data: { id: 'region-job-1', status: 'queued' }, request_id: 'req-region' },
+    } as never)
+    const id = await createRegionOcrTask({
+      name: '端子区域识别', sourceJobId: 'source-job-1',
+      model: { value: 'mock', version: '1.0.0' },
+      regions: [{ clientId: 'roi-1', bbox: [100, 120, 400, 300] }],
+    })
+    expect(id).toBe('region-job-1')
+    expect(post).toHaveBeenCalledWith('/ocr/region-jobs', {
+      name: '端子区域识别', file_id: undefined, source_job_id: 'source-job-1',
+      model_id: 'mock', model_version: '1.0.0',
+      pages: [{ page_no: 1, regions: [{ client_id: 'roi-1', bbox: [100, 120, 400, 300] }] }],
+    })
   })
 
   it('keeps the uploaded image URL and dimensions on API pages', async () => {

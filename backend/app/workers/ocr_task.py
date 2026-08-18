@@ -6,7 +6,10 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Lock
 from typing import TYPE_CHECKING
 
+from PIL import Image
+
 from app.ocr.errors import OcrError
+from app.ocr.contracts import OcrRegion
 from app.utils.common import now, uid
 
 if TYPE_CHECKING:
@@ -52,21 +55,48 @@ class OcrTaskWorker:
                 job_id, status="running", stage="recognizing", progress=20,
             )
             uploaded_file = service.file(job["file_id"])
-            result = service.ocr_adapter.recognize_file(
-                service.content_path(uploaded_file), options=job.get("options", {}),
-            )
+            region_context = service.region_jobs.context(job_id)
+            if region_context:
+                regions = [
+                    OcrRegion(roi_id=item["id"], bbox=tuple(item["bbox"]))
+                    for item in region_context["regions"]
+                ]
+                with Image.open(service.content_path(uploaded_file)) as opened_image:
+                    opened_image.load()
+                    result = service.ocr_adapter.recognize_image(
+                        opened_image.convert("RGB"), regions=regions,
+                    )
+            else:
+                result = service.ocr_adapter.recognize_file(
+                    service.content_path(uploaded_file), options=job.get("options", {}),
+                )
             service.jobs.update_state(job_id, status="running", stage="persisting", progress=90)
             review_count = sum(1 for item in result.detections if item.review_required)
             status = "partial_success" if result.roi_errors else "succeeded"
+            detections = (
+                sorted(
+                    result.detections,
+                    key=lambda item: (
+                        item.bbox[1], item.bbox[0], item.bbox[3], item.bbox[2],
+                    ),
+                )
+                if region_context else result.detections
+            )
             items = []
-            for order, detection in enumerate(result.detections, 1):
+            for order, detection in enumerate(detections, 1):
+                attributes = dict(detection.attributes)
+                if region_context:
+                    attributes.update({
+                        "source": "region_ocr",
+                        "source_job_id": region_context.get("source_job_id"),
+                    })
                 items.append({
                     "id": uid(), "job_id": job_id, "page_id": page_id,
                     "page_no": 1, "reading_order": order, "type": "text_line",
                     "text": detection.text, "confidence": detection.confidence,
                     "bbox": list(detection.bbox),
                     "polygon": [list(point) for point in detection.polygon],
-                    "attributes": detection.attributes,
+                    "attributes": attributes,
                 })
             page_error = (
                 {"code": "OCR_PARTIAL_FAILURE", "roi_errors": result.roi_errors}

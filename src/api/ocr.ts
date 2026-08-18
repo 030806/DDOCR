@@ -77,6 +77,18 @@ type ApiUploadSession = {
   upload_headers: Record<string, string>
 }
 
+type ApiFile = {
+  id: string
+  file_name: string
+  width_px?: number
+  height_px?: number
+}
+
+export type RegionDraft = {
+  clientId: string
+  bbox: OcrItem['bbox']
+}
+
 type ApiCreatedJob = {
   id: string
   status: string
@@ -343,6 +355,25 @@ export async function uploadAndCreateOcrTask(
   model: Pick<ModelOption, 'value' | 'version'>,
   onStage?: (stage: UploadProgressStage, progress: number) => void,
 ): Promise<string> {
+  const uploaded = await uploadOcrFile(file, onStage)
+
+  onStage?.('job', 90)
+  const jobResponse = await apiClient.post<ApiEnvelope<ApiCreatedJob>>('/ocr/jobs', {
+    name: file.name.replace(/\.[^.]+$/, '') || file.name,
+    file_id: uploaded.id,
+    model_id: model.value,
+    model_version: model.version,
+    options: {},
+  })
+
+  onStage?.('job', 100)
+  return jobResponse.data.data.id
+}
+
+export async function uploadOcrFile(
+  file: File,
+  onStage?: (stage: UploadProgressStage, progress: number) => void,
+): Promise<ApiFile> {
   onStage?.('session', 10)
 
   const sessionResponse = await apiClient.post<ApiEnvelope<ApiUploadSession>>(
@@ -368,19 +399,29 @@ export async function uploadAndCreateOcrTask(
   })
 
   onStage?.('complete', 80)
-  await apiClient.post(`/files/${session.file_id}/complete`)
+  const completed = await apiClient.post<ApiEnvelope<ApiFile>>(`/files/${session.file_id}/complete`)
+  return { ...completed.data.data, id: completed.data.data.id || session.file_id }
+}
 
-  onStage?.('job', 90)
-  const jobResponse = await apiClient.post<ApiEnvelope<ApiCreatedJob>>('/ocr/jobs', {
-    name: file.name.replace(/\.[^.]+$/, '') || file.name,
-    file_id: session.file_id,
-    model_id: model.value,
-    model_version: model.version,
-    options: {},
+export async function createRegionOcrTask(input: {
+  name: string
+  model: Pick<ModelOption, 'value' | 'version'>
+  regions: RegionDraft[]
+  fileId?: string
+  sourceJobId?: string
+}): Promise<string> {
+  const response = await apiClient.post<ApiEnvelope<ApiCreatedJob>>('/ocr/region-jobs', {
+    name: input.name,
+    file_id: input.fileId,
+    source_job_id: input.sourceJobId,
+    model_id: input.model.value,
+    model_version: input.model.version,
+    pages: [{
+      page_no: 1,
+      regions: input.regions.map(region => ({ client_id: region.clientId, bbox: region.bbox })),
+    }],
   })
-
-  onStage?.('job', 100)
-  return jobResponse.data.data.id
+  return response.data.data.id
 }
 
 export async function getModels(): Promise<ModelOption[]> {

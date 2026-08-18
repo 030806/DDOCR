@@ -57,6 +57,10 @@ function openTask(task: OcrTask, review = false) {
   router.push({ path: `/workspace/${task.id}`, query: review ? { action: 'review' } : undefined })
 }
 
+function createRegionTask(task: OcrTask) {
+  router.push({ path: `/workspace/${task.id}`, query: { action: 'region' } })
+}
+
 async function exportTask(task: OcrTask) {
   exportingTaskId.value = task.id
   try {
@@ -124,6 +128,7 @@ function deleteTask(task: OcrTask) {
               <div class="task-actions">
                 <button @click="openTask(record)"><EyeOutlined /> 查看</button>
                 <button :disabled="!record.reviewCount" @click="openTask(record, true)">继续复核</button>
+                <button :disabled="!['succeeded', 'partial'].includes(record.status)" @click="createRegionTask(record)">区域识别</button>
                 <button :disabled="!record.regionCount || exportingTaskId === record.id" @click="exportTask(record)"><ExportOutlined /> {{ exportingTaskId === record.id ? '导出中' : '导出' }}</button>
                 <button class="danger" @click="deleteTask(record)"><DeleteOutlined /></button>
               </div>

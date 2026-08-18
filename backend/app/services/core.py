@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import math
 import os
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -19,10 +20,12 @@ from app.repositories.correction_comment import CommentRepository, CorrectionRep
 from app.repositories.file_job import FileRepository, OCRJobRepository
 from app.repositories.export_idempotency import ExportRepository, IdempotencyRepository
 from app.repositories.page_result import OCRResultRepository, PageRepository
+from app.repositories.region_job import RegionJobRepository
 from app.schemas.contracts import (
     CorrectionCreate,
     ExportCreate,
     JobCreate,
+    RegionJobCreate,
     UploadSessionCreate,
 )
 from app.utils.common import now, uid
@@ -52,6 +55,7 @@ class MockOcrService:
         self.jobs = OCRJobRepository(store.engine)
         self.page_repository = PageRepository(store.engine)
         self.result_repository = OCRResultRepository(store.engine)
+        self.region_jobs = RegionJobRepository(store.engine)
         self.correction_repository = CorrectionRepository(store.engine)
         self.comment_repository = CommentRepository(store.engine)
         self.export_repository = ExportRepository(store.engine)
@@ -354,6 +358,107 @@ class MockOcrService:
         self.job_submitter(job_id)
         response_fields = ("id", "status", "stage", "progress", "created_at")
         return {field: job[field] for field in response_fields}
+
+    @staticmethod
+    def _region_bbox(
+        bbox: tuple[float, float, float, float], width: int, height: int,
+    ) -> list[float]:
+        values = [float(value) for value in bbox]
+        if not all(math.isfinite(value) for value in values):
+            raise HTTPException(422, "Region bbox coordinates must be finite")
+        x1, y1, x2, y2 = values
+        if x1 < 0 or y1 < 0 or x2 > width or y2 > height:
+            raise HTTPException(422, "Region bbox must be inside the source image")
+        if x2 - x1 < 16 or y2 - y1 < 16:
+            raise HTTPException(422, "Region bbox must be at least 16x16 pixels")
+        return values
+
+    def create_region_job(
+        self,
+        body: RegionJobCreate,
+        owner_id: str,
+    ) -> dict[str, Any]:
+        if bool(body.file_id) == bool(body.source_job_id):
+            raise HTTPException(422, "Exactly one of file_id and source_job_id is required")
+
+        source_job = None
+        file_id = body.file_id
+        if body.source_job_id:
+            source_job = self.job(body.source_job_id, owner_id)
+            if source_job["status"] not in {"succeeded", "partial_success"}:
+                raise HTTPException(409, "Source OCR job must be completed")
+            file_id = source_job["file_id"]
+        assert file_id is not None
+        uploaded_file = self.file(file_id, owner_id)
+        if uploaded_file["status"] != "ready" or not self.content_path(uploaded_file).exists():
+            raise HTTPException(409, {"code": "SOURCE_FILE_UNAVAILABLE"})
+        if not (uploaded_file.get("actual_media_type") or uploaded_file["media_type"]).startswith("image/"):
+            raise HTTPException(422, "Region OCR currently supports images only")
+        if body.model_id != "mock" or body.model_version != "1.0.0":
+            raise HTTPException(422, "Unknown model version")
+        if len(body.pages) != 1 or body.pages[0].page_no != 1:
+            raise HTTPException(422, "Region OCR currently supports page 1 only")
+
+        width = int(uploaded_file.get("width_px", 1200))
+        height = int(uploaded_file.get("height_px", 1600))
+        client_ids: set[str] = set()
+        normalized_regions: list[dict[str, Any]] = []
+        seen_boxes: set[tuple[float, ...]] = set()
+        for order, region in enumerate(body.pages[0].regions, 1):
+            if region.client_id in client_ids:
+                raise HTTPException(422, "Region client_id values must be unique")
+            client_ids.add(region.client_id)
+            bbox = self._region_bbox(region.bbox, width, height)
+            bbox_key = tuple(bbox)
+            if bbox_key in seen_boxes:
+                raise HTTPException(422, "Duplicate region bbox")
+            seen_boxes.add(bbox_key)
+            normalized_regions.append({
+                "id": uid(), "job_id": "", "page_no": 1,
+                "client_id": region.client_id, "bbox": bbox, "reading_order": order,
+            })
+
+        job_id = uid()
+        page_id = uid()
+        created_at = now()
+        job = {
+            "id": job_id, "owner_id": owner_id, "name": body.name,
+            "file_id": file_id, "file_name": uploaded_file["file_name"],
+            "model_id": body.model_id, "model_version": body.model_version,
+            "status": "queued", "stage": "queued", "progress": 0,
+            "created_at": created_at, "started_at": None, "finished_at": None,
+            "page_ids": [page_id], "page_count": 1, "completed_pages": 0,
+            "failed_pages": 0, "result_count": 0, "review_count": 0,
+            "options": {"recognition_scope": "regions"}, "deleted": False,
+        }
+        self.jobs.create(job)
+        self.page_repository.create(self._build_page(
+            job_id, page_id, [], width, height,
+            status="queued", review_count=0, processing_ms=0, roi_errors={},
+        ))
+        for region in normalized_regions:
+            region["job_id"] = job_id
+        self.region_jobs.create(
+            job_id=job_id, source_job_id=body.source_job_id,
+            file_id=file_id, created_by=owner_id, regions=normalized_regions,
+        )
+        if self.job_submitter is None:
+            raise HTTPException(503, "OCR worker is not available")
+        self.job_submitter(job_id)
+        return {key: job[key] for key in ("id", "status", "stage", "progress", "created_at")}
+
+    def region_job_context(self, job_id: str, owner_id: str) -> dict[str, Any]:
+        self.job(job_id, owner_id)
+        context = self.region_jobs.context(job_id)
+        if context is None:
+            raise HTTPException(404, "Region OCR job not found")
+        return {
+            **context,
+            "pages": [{
+                "page_no": 1,
+                "regions": [region for region in context["regions"] if region["page_no"] == 1],
+            }],
+        }
 
     @staticmethod
     def _build_page(

@@ -1,10 +1,12 @@
 from pathlib import Path
 from time import monotonic, sleep
-from typing import Any
+from typing import Any, Sequence
 
 from fastapi.testclient import TestClient
 
 from app.ocr.contracts import AdapterDetection, AdapterPageResult
+from app.ocr.contracts import OcrRegion
+from PIL import Image
 
 
 class FakeOcrAdapter:
@@ -15,6 +17,22 @@ class FakeOcrAdapter:
             AdapterDetection(text, score, ((box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3])), box, "page_1", index == 2, {})
             for index, (text, score, box) in enumerate(values)
         ), {}, 20)
+
+    def recognize_image(
+        self, image: Image.Image, regions: Sequence[OcrRegion] | None = None,
+    ) -> AdapterPageResult:
+        del image
+        active = tuple(regions or ())
+        detections = []
+        for region in active:
+            x1, y1, x2, y2 = region.bbox
+            box = (x1 + 2, y1 + 2, x2 - 2, y2 - 2)
+            detections.append(AdapterDetection(
+                f"ROI-{region.roi_id[-4:]}", 0.97,
+                ((box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3])),
+                box, region.roi_id, False, {"source": "region_ocr"},
+            ))
+        return AdapterPageResult(tuple(detections), {}, 10)
 
 
 def wait_for_job(client: TestClient, job_id: str, headers: dict[str, str], timeout: float = 5.0) -> dict[str, Any]:

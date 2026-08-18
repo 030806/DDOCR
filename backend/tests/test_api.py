@@ -74,6 +74,19 @@ def get_first_result(
     return response.json()["data"]["items"][0]
 
 
+def upload_image(test_client: TestClient, headers: dict[str, str]) -> str:
+    image_buffer = BytesIO()
+    Image.new("RGB", (1200, 1600), "white").save(image_buffer, format="PNG")
+    content = image_buffer.getvalue()
+    upload = test_client.post(
+        "/api/v1/files/upload-sessions", headers=headers,
+        json={"file_name": "region.png", "size_bytes": len(content), "media_type": "image/png"},
+    ).json()["data"]
+    test_client.put(f"/api/v1/files/{upload['file_id']}/content", headers=headers, content=content)
+    test_client.post(f"/api/v1/files/{upload['file_id']}/complete", headers=headers)
+    return upload["file_id"]
+
+
 def register_headers(
     test_client: TestClient,
     phone: str = "13700137000",
@@ -99,6 +112,91 @@ def test_empty_backend_seeds_api_demo_results(
     jobs_response = test_client.get("/api/v1/ocr/jobs", headers=headers)
     jobs = jobs_response.json()["data"]["items"]
     assert jobs == []
+
+
+def test_region_job_from_uploaded_file_is_independent(tmp_path: Path) -> None:
+    test_client = client(tmp_path)
+    headers = register_headers(test_client)
+    file_id = upload_image(test_client, headers)
+    response = test_client.post(
+        "/api/v1/ocr/region-jobs", headers=headers,
+        json={
+            "name": "局部识别", "file_id": file_id,
+            "model_id": "mock", "model_version": "1.0.0",
+            "pages": [{"page_no": 1, "regions": [
+                {"client_id": "roi-b", "bbox": [500, 600, 900, 820]},
+                {"client_id": "roi-a", "bbox": [100, 120, 400, 300]},
+            ]}],
+        },
+    )
+    assert response.status_code == 202
+    job_id = response.json()["data"]["id"]
+    assert wait_for_job(test_client, job_id, headers)["status"] == "succeeded"
+    context = test_client.get(
+        f"/api/v1/ocr/region-jobs/{job_id}/context", headers=headers,
+    ).json()["data"]
+    assert context["source_job_id"] is None
+    assert context["region_count"] == 2
+    results = test_client.get(
+        f"/api/v1/ocr/jobs/{job_id}/pages/1/results", headers=headers,
+    ).json()["data"]["items"]
+    assert len(results) == 2
+    assert results[0]["bbox"] == [102.0, 122.0, 398.0, 298.0]
+    assert results[1]["bbox"] == [502.0, 602.0, 898.0, 818.0]
+    assert results[0]["attributes"]["source"] == "region_ocr"
+
+
+def test_region_job_can_derive_from_completed_job_without_changing_it(tmp_path: Path) -> None:
+    test_client = client(tmp_path)
+    source_job_id, headers = workflow(test_client)
+    source_before = test_client.get(
+        f"/api/v1/ocr/jobs/{source_job_id}/pages/1/results", headers=headers,
+    ).json()["data"]["items"]
+    response = test_client.post(
+        "/api/v1/ocr/region-jobs", headers=headers,
+        json={
+            "name": "派生区域识别", "source_job_id": source_job_id,
+            "model_id": "mock", "model_version": "1.0.0",
+            "pages": [{"page_no": 1, "regions": [
+                {"client_id": "roi-derived", "bbox": [50, 50, 500, 500]},
+            ]}],
+        },
+    )
+    assert response.status_code == 202
+    derived_job_id = response.json()["data"]["id"]
+    wait_for_job(test_client, derived_job_id, headers)
+    context = test_client.get(
+        f"/api/v1/ocr/region-jobs/{derived_job_id}/context", headers=headers,
+    ).json()["data"]
+    assert context["source_job_id"] == source_job_id
+    source_after = test_client.get(
+        f"/api/v1/ocr/jobs/{source_job_id}/pages/1/results", headers=headers,
+    ).json()["data"]["items"]
+    assert source_after == source_before
+
+
+def test_region_job_rejects_invalid_source_and_bbox(tmp_path: Path) -> None:
+    test_client = client(tmp_path)
+    headers = register_headers(test_client)
+    file_id = upload_image(test_client, headers)
+    base = {
+        "name": "非法区域", "file_id": file_id,
+        "model_id": "mock", "model_version": "1.0.0",
+    }
+    too_small = test_client.post(
+        "/api/v1/ocr/region-jobs", headers=headers,
+        json={**base, "pages": [{"page_no": 1, "regions": [
+            {"client_id": "small", "bbox": [10, 10, 20, 20]},
+        ]}]},
+    )
+    assert too_small.status_code == 422
+    both_sources = test_client.post(
+        "/api/v1/ocr/region-jobs", headers=headers,
+        json={**base, "source_job_id": "also-set", "pages": [{"page_no": 1, "regions": [
+            {"client_id": "valid", "bbox": [10, 10, 100, 100]},
+        ]}]},
+    )
+    assert both_sources.status_code == 422
 
 
 def test_upload_session_advertises_200_mib_limit(tmp_path: Path) -> None:

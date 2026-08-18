@@ -10,6 +10,7 @@ from app.schemas.contracts import (
     ExportCreate,
     ForgotPasswordCreate,
     JobCreate,
+    RegionJobCreate,
     LoginCreate,
     PasswordChange,
     PasswordResetCreate,
@@ -225,6 +226,26 @@ def create_job(
     actor = authenticated_user(request, authorization)
     job_data = service(request).create_job(body, actor["id"])
     return envelope(job_data)
+
+
+@router.post("/ocr/region-jobs", status_code=202)
+def create_region_job(
+    body: RegionJobCreate,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
+    actor = authenticated_user(request, authorization)
+    return envelope(service(request).create_region_job(body, actor["id"]))
+
+
+@router.get("/ocr/region-jobs/{job_id}/context")
+def region_job_context(
+    job_id: str,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
+    actor = authenticated_user(request, authorization)
+    return envelope(service(request).region_job_context(job_id, actor["id"]))
 
 
 @router.get("/ocr/jobs")

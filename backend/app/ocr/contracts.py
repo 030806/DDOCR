@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol, TypeAlias, runtime_checkable
+from typing import Any, Protocol, Sequence, TypeAlias, runtime_checkable
+from PIL import Image
 
 
 Point: TypeAlias = tuple[float, float]
@@ -62,5 +63,14 @@ class OcrAdapterProtocol(Protocol):
         options: dict[str, Any] | None = None,
     ) -> AdapterPageResult:
         """Recognize a single image file and return adapted page results."""
+
+        ...
+
+    def recognize_image(
+        self,
+        image: Image.Image,
+        regions: Sequence[OcrRegion] | None = None,
+    ) -> AdapterPageResult:
+        """Recognize one in-memory image, optionally limited to regions."""
 
         ...

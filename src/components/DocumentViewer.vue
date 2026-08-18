@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CheckCircleFilled, CheckOutlined, CloseOutlined, EditOutlined, FileTextOutlined, LeftOutlined, RedoOutlined, RightOutlined, SaveOutlined, UndoOutlined, ZoomInOutlined, ZoomOutOutlined } from '@ant-design/icons-vue'
+import { AimOutlined, CheckCircleFilled, CheckOutlined, CloseOutlined, EditOutlined, FileTextOutlined, LeftOutlined, RedoOutlined, RightOutlined, SaveOutlined, UndoOutlined, ZoomInOutlined, ZoomOutOutlined } from '@ant-design/icons-vue'
 import type { OcrPage, OcrPolygon } from '../types/ocr'
 import BBoxLayer from './BBoxLayer.vue'
 
@@ -30,6 +30,7 @@ const emit = defineEmits<{
   geometryConfirm: []
   geometryCancel: []
   createBbox: [bbox: OcrPage['items'][number]['bbox']]
+  createRegionJob: []
 }>()
 </script>
 
@@ -56,6 +57,7 @@ const emit = defineEmits<{
       </div>
       <div class="document-name">{{ page.label }} <span>·</span> 原始尺寸 {{ page.sourceWidth || 2480 }} × {{ page.sourceHeight || 3508 }} px</div>
       <div class="zoom-control">
+        <button v-if="jobState === 'done'" :disabled="editMode" @click="emit('createRegionJob')"><AimOutlined /> 区域识别</button>
         <button :class="{ active: editMode }" @click="emit('editToggle')"><EditOutlined /> {{ editMode ? '退出编辑' : '编辑框' }}</button>
         <button @click="emit('zoomChange', Math.max(.55, zoom - .1))"><ZoomOutOutlined /></button>
         <span>{{ Math.round(zoom * 100) }}%</span>

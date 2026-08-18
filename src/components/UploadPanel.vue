@@ -19,6 +19,7 @@ const emit = defineEmits<{
   upload: [file: File]
   preview: []
   run: []
+  regionRun: []
 }>()
 
 const fileInput = ref<HTMLInputElement>()
@@ -62,5 +63,6 @@ function handleFileChange(event: Event) {
       <SearchOutlined v-else />
       {{ jobState === 'running' ? `识别中 ${progress}%` : jobState === 'done' ? '重新识别' : '开始识别' }}
     </button>
+    <button class="region-run-btn" :disabled="!currentModel || !hasFile || jobState === 'running'" @click="emit('regionRun')">局部框选识别</button>
   </section>
 </template>

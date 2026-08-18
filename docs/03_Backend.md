@@ -137,6 +137,18 @@ Adapter 规范化 → results/page/job 同事务落库。当前只完成单页�
 - Worker：重复投递、超时重试、单页失败、取消、死信和聚合。
 - 存储：签名上传、哈希、URL 过期、无权下载和生命周期。
 - E2E：上传到识别、刷新恢复、BBox 对齐、纠正、留言和全任务导出。
+
+## 9. 独立区域 OCR 任务
+
+区域识别使用标准 `ocr_jobs`、`pages` 和 `results` 保存生命周期及正式结果，新增 `ocr_region_job_scopes` 保存 `job_id/source_job_id/file_id` 关系，新增 `ocr_job_regions` 保存页面、客户端区域 ID、原图 bbox 和区域顺序。`source_job_id` 只用于追溯；Worker 的运行时依赖是共享 `file_id`，因此来源任务逻辑删除不会改变派生任务结果。
+
+创建服务对 `file_id/source_job_id` 做二选一校验，来源任务只接受 `succeeded/partial_success`，并校验文件状态、文件存在性、图片 MIME、模型版本、页码、有限坐标、图片边界、16 px 最小尺寸、区域数量及重复区域。区域任务在 `options_snapshot` 额外记录 `recognition_scope=regions`，但结构化查询以新增关系表为准。
+
+Worker 查询区域上下文；普通任务继续调用 `recognize_file`，区域任务将记录转换为 `OcrRegion` 后调用 `recognize_image`。OCR Adapter 输出的 polygon/bbox 始终是原图坐标，并在结果 attributes 中保留 `roi_id`。某个 ROI 无文字属于成功且产生零条结果；引擎报告 `roi_errors` 时沿用现有 `partial_success` 语义。
+
+区域任务持久化前忽略 ROI 创建顺序和随机 ID，统一按原图 `(bbox.y1, bbox.x1, bbox.y2, bbox.x2)` 排序并重新生成连续 `reading_order`。因此结果列表和导出均按整张图片从上到下、同一高度从左到右排列。普通整页 OCR 的既有顺序不受影响。
+
+首期后端只支持单页图片、多矩形区域。PDF 分页、跨页任务聚合和区域级重试留待标准页面图流水线完成后实现。
 # 数据库与迁移
 
 后端业务数据已接入 PostgreSQL，连接串通过 `DDOCR_DATABASE_URL` 配置，数据库结构由 Alembic 管理。开发环境初始化、升级和回退命令见 `backend/README.md`。上传原文件与 Excel 导出物仍写入 `DDOCR_DATA_DIR`，数据库保存其元数据及相对路径。

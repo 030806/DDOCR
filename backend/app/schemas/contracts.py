@@ -18,6 +18,25 @@ class JobCreate(BaseModel):
     options: dict[str, Any] = Field(default_factory=dict)
 
 
+class RegionJobRegionCreate(BaseModel):
+    client_id: str = Field(min_length=1, max_length=100)
+    bbox: tuple[float, float, float, float]
+
+
+class RegionJobPageCreate(BaseModel):
+    page_no: int = Field(gt=0)
+    regions: list[RegionJobRegionCreate] = Field(min_length=1, max_length=20)
+
+
+class RegionJobCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    file_id: str | None = None
+    source_job_id: str | None = None
+    model_id: str
+    model_version: str
+    pages: list[RegionJobPageCreate] = Field(min_length=1, max_length=1)
+
+
 class CorrectionCreate(BaseModel):
     corrected_text: str = Field(max_length=500)
     base_revision: int = Field(ge=0)
