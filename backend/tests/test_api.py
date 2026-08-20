@@ -541,3 +541,26 @@ def test_ocr_resources_are_isolated_by_owner(tmp_path: Path) -> None:
     assert test_client.get(
         f"/api/v1/ocr/results/{result_id}/comments", headers=other_headers
     ).status_code == 404
+
+
+def test_delete_job_persists_and_is_owner_scoped(tmp_path: Path) -> None:
+    test_client = client(tmp_path)
+    job_id, owner_headers = workflow(test_client)
+    other_headers = register_headers(test_client, "13500135001", "QC-DELETE")
+
+    assert test_client.delete(
+        f"/api/v1/ocr/jobs/{job_id}", headers=other_headers
+    ).status_code == 404
+    assert test_client.delete(
+        f"/api/v1/ocr/jobs/{job_id}", headers=owner_headers
+    ).status_code == 204
+
+    assert test_client.get(
+        f"/api/v1/ocr/jobs/{job_id}", headers=owner_headers
+    ).status_code == 404
+    listed = test_client.get("/api/v1/ocr/jobs", headers=owner_headers)
+    assert all(item["id"] != job_id for item in listed.json()["data"]["items"])
+
+    stored = test_client.app.state.service.jobs.get(job_id)
+    assert stored is not None
+    assert stored["deleted"] is True

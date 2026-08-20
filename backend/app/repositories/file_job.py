@@ -123,6 +123,16 @@ class OCRJobRepository:
         with Session(self.engine) as db:
             return [_job_dict(row) for row in db.execute(select(ocr_jobs)).all()]
 
+    def soft_delete(self, job_id: str) -> None:
+        """Hide a job while retaining its relational OCR audit data."""
+
+        with Session(self.engine) as db, db.begin():
+            db.execute(
+                update(ocr_jobs)
+                .where(ocr_jobs.c.id == job_id)
+                .values(deleted_at=datetime.now(UTC), updated_at=datetime.now(UTC))
+            )
+
     def update_state(self, job_id: str, **values: Any) -> dict[str, Any]:
         mapping = {
             "completed_pages": "page_succeeded", "failed_pages": "page_failed",

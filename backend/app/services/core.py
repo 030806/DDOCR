@@ -513,6 +513,12 @@ class MockOcrService:
     def all_jobs(self) -> list[dict[str, Any]]:
         return self.jobs.all()
 
+    def delete_job(self, job_id: str, owner_id: str) -> None:
+        """Soft-delete an owned OCR job from all public job views."""
+
+        self.job(job_id, owner_id)
+        self.jobs.soft_delete(job_id)
+
     def update_file(self, item: dict[str, Any]) -> dict[str, Any]:
         return self.files.update(item)
 

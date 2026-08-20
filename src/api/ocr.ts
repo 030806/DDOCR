@@ -269,6 +269,11 @@ export async function getTasks(): Promise<OcrTask[]> {
   return response.data.data.items.map(mapApiJob)
 }
 
+// 软删除任务；服务端保留审计数据，但不再对用户展示该任务。
+export async function deleteTask(taskId: string) {
+  await apiClient.delete(`/ocr/jobs/${taskId}`)
+}
+
 // 创建服务端全任务导出，并下载由后端真实 OCR 结果生成的 Excel。
 export async function exportTaskResults(taskId: string, taskName: string, mode: ExportMode) {
   const created = await apiClient.post<ApiEnvelope<ApiExport>>(`/ocr/jobs/${taskId}/exports`, {

@@ -1,10 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apiClient } from './client'
-import { createComment, createCorrection, createRegionOcrTask, deleteComment, exportTaskResults, getModels, getOcrPages, mapApiJob, mapApiResult, saveResultEdits, updateComment, updateResultReviewStatus, uploadAndCreateOcrTask } from './ocr'
+import { createComment, createCorrection, createRegionOcrTask, deleteComment, deleteTask, exportTaskResults, getModels, getOcrPages, mapApiJob, mapApiResult, saveResultEdits, updateComment, updateResultReviewStatus, uploadAndCreateOcrTask } from './ocr'
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('OCR API adapters', () => {
+  it('deletes a persisted OCR task through the jobs API', async () => {
+    const remove = vi.spyOn(apiClient, 'delete').mockResolvedValue({} as never)
+    await deleteTask('job-1')
+    expect(remove).toHaveBeenCalledWith('/ocr/jobs/job-1')
+  })
+
   it('persists batch result review status', async () => {
     const post = vi.spyOn(apiClient, 'post').mockResolvedValueOnce({
       data: { data: { updated_count: 2, items: [] }, request_id: 'req-review' },

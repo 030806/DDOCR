@@ -70,6 +70,9 @@ DDOCR_OCR_EXECUTION_MODE=async
 `POST /api/v1/ocr/jobs` 创建 queued 任务后立即返回 HTTP 202。进程内单线程 Worker
 异步执行真实 OCR；客户端应轮询 Job，成功后再读取 Pages/Results。
 
+任务记录页通过 `DELETE /api/v1/ocr/jobs/{job_id}` 删除任务。删除采用
+`ocr_jobs.deleted_at` 软删除以保留审计数据；任务随后不会出现在列表中，详情接口返回 404。
+
 测试使用临时 SQLite 数据库，不会读写开发环境中的 `ddocr`。生产 PostgreSQL 表只通过 Alembic 管理，应用启动不会隐式建表。
 
 认证模块已经使用 `tenants`、`users`、`sessions` 关系表作为唯一数据源。迁移 `622436c321e7` 会幂等导入旧 `objects(kind='user'/'session')` 数据；文件、OCR 任务及结果在后续里程碑迁移。

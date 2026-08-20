@@ -296,6 +296,17 @@ def job(
     return envelope(job_data)
 
 
+@router.delete("/ocr/jobs/{job_id}", status_code=204)
+def delete_job(
+    job_id: str,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> Response:
+    actor = authenticated_user(request, authorization)
+    service(request).delete_job(job_id, actor["id"])
+    return Response(status_code=204)
+
+
 @router.get("/ocr/jobs/{job_id}/pages")
 def pages(
     job_id: str,

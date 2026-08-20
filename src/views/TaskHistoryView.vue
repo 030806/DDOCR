@@ -3,7 +3,7 @@ import { computed, h, onMounted, ref } from 'vue'
 import { DeleteOutlined, ExportOutlined, EyeOutlined, FileTextOutlined, SearchOutlined } from '@ant-design/icons-vue'
 import { Modal, message } from 'ant-design-vue'
 import { useRouter } from 'vue-router'
-import { exportTaskResults, getTasks } from '../api/ocr'
+import { deleteTask as deleteOcrTask, exportTaskResults, getTasks } from '../api/ocr'
 import { filterAndSortTasks } from '../taskFilters'
 import type { OcrTask, TaskStatus, TaskTimeOrder } from '../types/task'
 import { useAppSettings } from '../composables/useAppSettings'
@@ -12,6 +12,7 @@ const router = useRouter()
 const { settings } = useAppSettings()
 const tasks = ref<OcrTask[]>([])
 const exportingTaskId = ref<string>()
+const deletingTaskId = ref<string>()
 const search = ref('')
 const status = ref<TaskStatus | 'all'>('all')
 const timeOrder = ref<TaskTimeOrder>('newest')
@@ -74,8 +75,6 @@ async function exportTask(task: OcrTask) {
 }
 
 function deleteTask(task: OcrTask) {
-  // TODO(integration): Add/connect DELETE /ocr/jobs/{job_id}; local removal is
-  // lost on refresh and does not delete or mark the database task.
   Modal.confirm({
     title: '删除任务？',
     content: `确认删除“${task.name}”吗？`,
@@ -83,9 +82,18 @@ function deleteTask(task: OcrTask) {
     okType: 'danger',
     cancelText: '取消',
     icon: h(DeleteOutlined),
-    onOk: () => {
-      tasks.value = tasks.value.filter((item) => item.id !== task.id)
-      message.success('任务已删除')
+    onOk: async () => {
+      deletingTaskId.value = task.id
+      try {
+        await deleteOcrTask(task.id)
+        tasks.value = tasks.value.filter((item) => item.id !== task.id)
+        message.success('任务已删除')
+      } catch {
+        message.error('任务删除失败，请稍后重试')
+        throw new Error('Task deletion failed')
+      } finally {
+        deletingTaskId.value = undefined
+      }
     },
   })
 }
@@ -130,7 +138,7 @@ function deleteTask(task: OcrTask) {
                 <button :disabled="!record.reviewCount" @click="openTask(record, true)">继续复核</button>
                 <button :disabled="!['succeeded', 'partial'].includes(record.status)" @click="createRegionTask(record)">区域识别</button>
                 <button :disabled="!record.regionCount || exportingTaskId === record.id" @click="exportTask(record)"><ExportOutlined /> {{ exportingTaskId === record.id ? '导出中' : '导出' }}</button>
-                <button class="danger" @click="deleteTask(record)"><DeleteOutlined /></button>
+                <button class="danger" :disabled="deletingTaskId === record.id" @click="deleteTask(record)"><DeleteOutlined /></button>
               </div>
             </template>
           </template>
