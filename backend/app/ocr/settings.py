@@ -59,6 +59,7 @@ class OcrSettings:
     rotations: tuple[int, ...]
     max_concurrency: int
     execution_mode: str
+    backend: str = "onnx"
 
     @classmethod
     def from_env(cls) -> OcrSettings:
@@ -76,6 +77,7 @@ class OcrSettings:
         execution_mode = os.getenv(
             "DDOCR_OCR_EXECUTION_MODE", "blocking"
         ).strip().lower()
+        backend = os.getenv("DDOCR_OCR_BACKEND", "onnx").strip().lower()
         rotations = _parse_rotations(
             os.getenv("DDOCR_OCR_ROTATIONS", "0,90,180,270")
         )
@@ -90,6 +92,8 @@ class OcrSettings:
             raise ValueError(
                 "DDOCR_OCR_EXECUTION_MODE must be 'blocking' or 'async'"
             )
+        if backend not in {"paddle", "onnx"}:
+            raise ValueError("DDOCR_OCR_BACKEND must be 'paddle' or 'onnx'")
 
         return cls(
             device=device,
@@ -99,4 +103,5 @@ class OcrSettings:
             rotations=rotations,
             max_concurrency=max_concurrency,
             execution_mode=execution_mode,
+            backend=backend,
         )

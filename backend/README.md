@@ -45,20 +45,23 @@ python -m pytest -q
 
 ## 真实 OCR 运行环境
 
-`requirements.txt` 同时包含 FastAPI、关系数据库、测试工具和真实 PaddleOCR 推理依赖。
+`requirements.txt` 同时包含 FastAPI、关系数据库、测试工具、PaddleOCR 和
+RapidOCR（ONNX Runtime）推理依赖。
 后端直接使用的 Pydantic 也已显式锁定。安装后建议执行 `python -m pip check`。
 
-真实 OCR 默认使用 CPU、2 倍缩放和四方向识别，可通过环境变量调整：
+真实 OCR 默认使用 RapidOCR 的 ONNX 模型、CPU、2 倍缩放和四方向识别，可通过环境变量调整：
 
 ```dotenv
 DDOCR_OCR_DEVICE=cpu
+DDOCR_OCR_BACKEND=onnx
 DDOCR_OCR_SCALE=2.0
 DDOCR_OCR_ROTATIONS=0,90,180,270
 DDOCR_OCR_MAX_CONCURRENCY=1
 DDOCR_OCR_EXECUTION_MODE=async
 ```
 
-模型代码和端子编号库位于 `app/vendor/terminal_ocr_demo/`，不依赖仓库根目录的
+将 `DDOCR_OCR_BACKEND` 设置为 `paddle` 可回退至原 PaddleOCR/PaddleX 引擎；ONNX
+模式不加载 Paddle，也不需要 PaddleX 模型缓存。模型代码和端子编号库位于 `app/vendor/terminal_ocr_demo/`，不依赖仓库根目录的
 `demo/` 或启动时的当前工作目录。PaddleOCR/PaddleX 首次导入和模型加载可能较慢。
 
 真实模型测试默认不执行，需要分别设置 `DDOCR_RUN_PADDLE_SMOKE=1` 或

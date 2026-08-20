@@ -37,6 +37,7 @@ def test_terminal_ocr_engine_runs_real_paddle_pipeline(tmp_path: Path) -> None:
         rotations=(0,),
         max_concurrency=1,
         execution_mode="blocking",
+        backend="paddle",
     )
     engine = TerminalOcrEngine(settings)
 

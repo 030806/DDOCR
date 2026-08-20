@@ -140,26 +140,36 @@ class TerminalOcrEngine:
 
     @staticmethod
     def _create_default_engine(settings: OcrSettings) -> object:
-        """Create the real demo engine only when the wrapper is first used."""
+        """Create the configured OCR recognizer only when first used."""
 
         try:
             from app.vendor.terminal_ocr_demo.config import DemoConfig
-            from app.vendor.terminal_ocr_demo.ocr_engine import PaddleOCREngine
-            from app.vendor.terminal_ocr_demo.runtime_env import (
-                configure_paddlex_cache,
-            )
         except (ImportError, ModuleNotFoundError) as exc:
             raise OcrModelLoadError(
                 "app.vendor.terminal_ocr_demo is not importable"
             ) from exc
 
-        configure_paddlex_cache(settings.model_cache)
         config = DemoConfig(
             device=settings.device,
             scale=settings.scale,
             rotations=settings.rotations,
             code_library_path=settings.code_library,
         )
+        if settings.backend == "onnx":
+            try:
+                from app.ocr.onnx_engine import OnnxRecognizerEngine
+            except (ImportError, ModuleNotFoundError) as exc:
+                raise OcrModelLoadError("ONNX OCR engine is not importable") from exc
+            return OnnxRecognizerEngine(config)
+
+        try:
+            from app.vendor.terminal_ocr_demo.ocr_engine import PaddleOCREngine
+            from app.vendor.terminal_ocr_demo.runtime_env import (
+                configure_paddlex_cache,
+            )
+        except (ImportError, ModuleNotFoundError) as exc:
+            raise OcrModelLoadError("Paddle OCR engine is not importable") from exc
+        configure_paddlex_cache(settings.model_cache)
         return PaddleOCREngine(config)
 
     @staticmethod

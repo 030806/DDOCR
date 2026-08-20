@@ -9,6 +9,7 @@ from PIL import Image
 from app.ocr.contracts import OcrRegion
 from app.ocr.engine import TerminalOcrEngine
 from app.ocr.errors import OcrInferenceError, OcrModelLoadError
+from app.ocr.onnx_engine import OnnxRecognizerEngine
 from app.ocr.settings import OcrSettings
 
 
@@ -61,6 +62,28 @@ def test_engine_is_lazily_loaded_and_reused(tmp_path: Path) -> None:
     assert second[0] is created[0]
     assert first[1] == (region(),)
     assert first[2] == (20, 10)
+
+
+def test_default_engine_uses_onnx_backend(tmp_path: Path) -> None:
+    engine = TerminalOcrEngine(settings(tmp_path))
+
+    loaded = engine.load()
+
+    assert isinstance(loaded, OnnxRecognizerEngine)
+    engine.close()
+
+
+def test_settings_rejects_unknown_ocr_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DDOCR_OCR_BACKEND", "unsupported")
+
+    with pytest.raises(ValueError, match="DDOCR_OCR_BACKEND"):
+        OcrSettings.from_env()
+
+
+def test_settings_default_to_onnx(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DDOCR_OCR_BACKEND", raising=False)
+
+    assert OcrSettings.from_env().backend == "onnx"
 
 
 def test_load_initializes_once_without_running_inference(tmp_path: Path) -> None:
