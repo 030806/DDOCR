@@ -10,7 +10,6 @@ import type { ModelOption, OcrItem, OcrPage, OcrPolygon, OcrReviewStatus } from 
 import { createComment, createCorrection, createRegionOcrTask, deleteComment, getModels, getOcrPages, releasePageImages, saveResultEdits, updateComment, updateResultReviewStatus, uploadAndCreateOcrTask, uploadOcrFile, type RegionDraft } from '../api/ocr'
 import { createSplitLayout } from '../splitLayout'
 import { exportOcrResults, type ExportMode } from '../exportResults'
-import type { ResultViewMode } from '../ocrLayout'
 import UploadPanel from '../components/UploadPanel.vue'
 import DocumentViewer from '../components/DocumentViewer.vue'
 import OCRResultPanel from '../components/OCRResultPanel.vue'
@@ -44,7 +43,6 @@ const taskLoading = ref(false)
 const correctionOpen = ref(false)
 const commentOpen = ref(false)
 const reviewSaving = ref(false)
-const resultViewMode = ref<ResultViewMode>(settings.value.defaultResultViewMode)
 const workspaceWidth = ref(typeof window === 'undefined' ? 1440 : window.innerWidth)
 const workspace = ref<{ $el: HTMLElement }>()
 const pages = ref<OcrPage[]>(initialContent.pages)
@@ -615,7 +613,7 @@ async function handleExport(mode: ExportMode) {
         </div>
       </Pane>
       <Pane :size="splitLayout.resultSizePercent" :min-size="splitLayout.resultMinPercent">
-        <OCRResultPanel v-if="resultPanelPage" :page="resultPanelPage" :pages="pages" :selected-id="selectedId" :model-label="currentModel?.label || selectedModel" :low-confidence-threshold="settings.lowConfidenceThreshold" :show-confidence="settings.showConfidence" :can-undo-review="Boolean(lastReviewAction)" v-model:view-mode="resultViewMode" @select="selectItem" @correct="openCorrection" @comment="openComment" @export="handleExport" @review="reviewResults" @visible-change="visibleResultIds = $event" @undo="undoReviewAction" />
+        <OCRResultPanel v-if="resultPanelPage" :page="resultPanelPage" :pages="pages" :selected-id="selectedId" :model-label="currentModel?.label || selectedModel" :low-confidence-threshold="settings.lowConfidenceThreshold" :show-confidence="settings.showConfidence" :can-undo-review="Boolean(lastReviewAction)" @select="selectItem" @correct="openCorrection" @comment="openComment" @export="handleExport" @review="reviewResults" @visible-change="visibleResultIds = $event" @undo="undoReviewAction" />
       </Pane>
     </Splitpanes>
     <div v-else class="workspace-empty">

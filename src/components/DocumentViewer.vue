@@ -44,7 +44,7 @@ const emit = defineEmits<{
     </button>
     <div class="job-summary">
       <span class="status-dot"></span>
-      <div><b>{{ jobState === 'running' ? '正在识别' : '识别已完成' }}</b><small>{{ jobState === 'running' ? `${progress}% · 正在处理页面` : '用时 1.8 秒' }}</small></div>
+      <div><b>{{ jobState === 'running' ? '正在识别' : '识别已完成' }}</b><small v-if="jobState === 'running'">{{ progress }}% · 正在处理页面</small></div>
     </div>
   </aside>
 

@@ -4,16 +4,14 @@ import { CommentOutlined, DeleteOutlined, EditOutlined, SearchOutlined, UndoOutl
 import { Modal } from 'ant-design-vue'
 import type { OcrItem, OcrPage, OcrReviewStatus } from '../types/ocr'
 import type { ExportMode } from '../exportResults'
-import type { ResultViewMode } from '../ocrLayout'
 import { filterOcrItems } from '../resultVisibility'
-import OcrLayoutView from './OcrLayoutView.vue'
+import { sortOcrItemsByCoordinates } from '../ocrResultOrder'
 
 const props = defineProps<{
   page: OcrPage
   pages: OcrPage[]
   selectedId: string
   modelLabel: string
-  viewMode: ResultViewMode
   lowConfidenceThreshold: number
   showConfidence: boolean
   canUndoReview: boolean
@@ -27,7 +25,6 @@ const emit = defineEmits<{
   review: [ids: string[], status: OcrReviewStatus]
   undo: []
   'visible-change': [ids: string[]]
-  'update:viewMode': [mode: ResultViewMode]
 }>()
 
 const search = ref('')
@@ -36,6 +33,7 @@ const minimumConfidencePercent = ref(0)
 const showFalsePositive = ref(false)
 const showDeleted = ref(false)
 const selectedIds = ref<string[]>([])
+const coordinateSorted = ref(false)
 const filteredItems = computed(() => filterOcrItems(props.page.items, {
   search: search.value,
   minimumConfidence: minimumConfidencePercent.value / 100,
@@ -44,6 +42,9 @@ const filteredItems = computed(() => filterOcrItems(props.page.items, {
   showFalsePositive: showFalsePositive.value,
   showDeleted: showDeleted.value,
 }))
+const displayedItems = computed(() => coordinateSorted.value
+  ? sortOcrItemsByCoordinates(filteredItems.value)
+  : filteredItems.value)
 const activeItems = computed(() => props.page.items.filter(item => item.reviewStatus !== 'deleted' && item.reviewStatus !== 'false_positive'))
 const falsePositiveCount = computed(() => props.page.items.filter(item => item.reviewStatus === 'false_positive').length)
 const deletedCount = computed(() => props.page.items.filter(item => item.reviewStatus === 'deleted').length)
@@ -90,18 +91,15 @@ function reviewSelected(status: OcrReviewStatus) {
   } else apply()
 }
 
-watch(filteredItems, items => emit('visible-change', items.map(item => item.id)), { immediate: true })
-watch(() => props.page.no, () => { selectedIds.value = [] })
+watch(displayedItems, items => emit('visible-change', items.map(item => item.id)), { immediate: true })
+watch(() => props.page.no, () => { selectedIds.value = []; coordinateSorted.value = false })
 </script>
 
 <template>
   <aside class="results-panel">
     <div class="results-head">
       <div class="results-heading"><h2>识别结果</h2><span>{{ page.items.length }} 个文本区域</span></div>
-      <div class="result-view-switch" aria-label="识别结果展示模式">
-        <button :class="{ active: viewMode === 'list' }" @click="emit('update:viewMode', 'list')">列表</button>
-        <button :class="{ active: viewMode === 'layout' }" @click="emit('update:viewMode', 'layout')">原位布局</button>
-      </div>
+      <button class="copy-btn" :disabled="page.items.length < 2" @click="coordinateSorted = true">{{ coordinateSorted ? '已按坐标排序' : '按坐标排序' }}</button>
       <a-dropdown :trigger="['click']">
         <button class="copy-btn">导出结果</button>
         <template #overlay>
@@ -139,10 +137,10 @@ watch(() => props.page.no, () => { selectedIds.value = [] })
       <button class="danger" :disabled="!selectedIds.length" @click="reviewSelected('deleted')"><DeleteOutlined /> 删除</button>
       <button :disabled="!selectedIds.length" @click="reviewSelected('unreviewed')"><UndoOutlined /> 恢复</button>
     </div>
-    <div v-if="viewMode === 'list'" class="result-list">
-      <article v-for="item in filteredItems" :key="item.id" :data-result-id="item.id" class="result-card" :class="{ selected: selectedId === item.id, corrected: item.corrected }" @click="emit('select', item.id)">
+    <div class="result-list">
+      <article v-for="(item, displayIndex) in displayedItems" :key="item.id" :data-result-id="item.id" class="result-card" :class="{ selected: selectedId === item.id, corrected: item.corrected }" @click="emit('select', item.id)">
         <a-checkbox class="result-select" :checked="selectedIds.includes(item.id)" @click.stop @update:checked="toggleSelected(item.id, $event)" />
-        <div class="result-index">{{ String(page.items.indexOf(item) + 1).padStart(2, '0') }}</div>
+        <div class="result-index">{{ String(displayIndex + 1).padStart(2, '0') }}</div>
         <div class="result-main">
           <p>{{ item.corrected || item.text }}</p>
           <div class="result-meta">
@@ -161,19 +159,8 @@ watch(() => props.page.no, () => { selectedIds.value = [] })
           <button title="删除结果" @click.stop="emit('review', [item.id], 'deleted')"><DeleteOutlined /> 删除</button>
         </div>
       </article>
-      <a-empty v-if="!filteredItems.length" description="没有匹配的识别结果" />
+      <a-empty v-if="!displayedItems.length" description="没有匹配的识别结果" />
     </div>
-    <OcrLayoutView
-      v-else
-      :items="filteredItems"
-      :selected-id="selectedId"
-      :show-confidence="showConfidence"
-      :source-width="page.sourceWidth"
-      :source-height="page.sourceHeight"
-      @select="emit('select', $event)"
-      @correct="emit('correct', $event)"
-      @comment="emit('comment', $event)"
-    />
     <footer class="results-footer">
       <button v-if="canUndoReview" class="footer-undo-btn" @click="emit('undo')"><UndoOutlined /> 撤销上一次结果操作</button>
       <span>模型 {{ modelLabel }}</span>

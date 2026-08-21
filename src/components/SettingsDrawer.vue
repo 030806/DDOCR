@@ -35,7 +35,6 @@ function reset() {
     <a-form layout="vertical" class="settings-form">
       <a-form-item label="默认 OCR 模型"><a-select v-model:value="draft.defaultModelId" :options="models.map(model => ({ value: model.value, label: model.label }))" /></a-form-item>
       <a-form-item label="低置信度阈值"><a-input-number v-model:value="draft.lowConfidenceThreshold" :min="0.5" :max="1" :step="0.01" style="width: 100%" /><small>低于 {{ (draft.lowConfidenceThreshold * 100).toFixed(0) }}% 的结果将标记为待复核</small></a-form-item>
-      <a-form-item label="默认结果展示模式"><a-radio-group v-model:value="draft.defaultResultViewMode" button-style="solid"><a-radio-button value="list">列表</a-radio-button><a-radio-button value="layout">原位布局</a-radio-button></a-radio-group></a-form-item>
       <a-form-item label="默认显示置信度"><a-switch v-model:checked="draft.showConfidence" /></a-form-item>
       <a-form-item label="默认 Excel 导出类型"><a-select v-model:value="draft.defaultExportMode" :options="[{ value: 'simple', label: '精简导出' }, { value: 'full', label: '完整导出' }]" /></a-form-item>
       <a-form-item label="默认页面缩放比例"><a-select v-model:value="draft.defaultZoom" :options="[{ value: .55, label: '55%' }, { value: .7, label: '70%' }, { value: .82, label: '82%（适应窗口）' }, { value: 1, label: '100%' }, { value: 1.5, label: '150%' }, { value: 2, label: '200%' }, { value: 3, label: '300%' }]" /></a-form-item>
