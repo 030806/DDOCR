@@ -3,7 +3,7 @@ import { computed, reactive, ref } from 'vue'
 import { message } from 'ant-design-vue'
 import { useRouter } from 'vue-router'
 import { useAuth } from '../composables/useAuth'
-import { requestPasswordReset, resetPassword } from '../api/auth'
+import { getCaptcha, requestPasswordReset, resetPassword, verifyCaptcha } from '../api/auth'
 
 type Mode = 'login' | 'register' | 'forgot'
 
@@ -13,9 +13,11 @@ const mode = ref<Mode>('login')
 const resetStep = ref<1 | 2>(1)
 const submitting = ref(false)
 const developmentCode = ref('')
+const captchaId = ref('')
+const captchaImage = ref('')
 const form = reactive({
   name: '', email: '', employeeNo: '', department: '', phone: '',
-  password: '', confirm: '', code: '',
+  password: '', confirm: '', code: '', captchaCode: '',
 })
 const title = computed(() => {
   if (mode.value === 'register') return '创建账号'
@@ -34,22 +36,39 @@ function switchMode(value: Mode) {
   form.password = ''
   form.confirm = ''
   form.code = ''
+  form.captchaCode = ''
+  if (value === 'login') void refreshCaptcha()
 }
+
+async function refreshCaptcha() {
+  try {
+    const captcha = await getCaptcha()
+    captchaId.value = captcha.captcha_id
+    captchaImage.value = captcha.image
+    form.captchaCode = ''
+  } catch { message.error('验证码加载失败，请刷新页面重试') }
+}
+
+void refreshCaptcha()
 
 async function submit() {
   if (mode.value === 'forgot') return submitReset()
   if (!form.phone || !form.password) return message.warning('请填写联系电话和密码')
-  if (mode.value === 'register' && (!form.name || !form.employeeNo)) return message.warning('请填写姓名和员工编号')
+  if (mode.value === 'register' && !form.name) return message.warning('请填写姓名')
+  if (mode.value === 'login' && (!form.captchaCode || form.captchaCode.length !== 4)) return message.warning('请输入右侧 4 位验证码')
   if (mode.value === 'register' && form.password !== form.confirm) return message.warning('两次输入的密码不一致')
   if (!validPassword(form.password)) return message.warning('密码至少 8 位，并同时包含字母和数字')
   submitting.value = true
   try {
-    if (mode.value === 'login') await login(form.phone, form.password)
-    else await register({ name: form.name, email: form.email, employeeNo: form.employeeNo, department: form.department, phone: form.phone, password: form.password })
+    if (mode.value === 'login') {
+      await verifyCaptcha(captchaId.value, form.captchaCode)
+      await login(form.phone, form.password)
+    } else await register({ name: form.name, phone: form.phone, password: form.password })
     message.success(mode.value === 'login' ? '登录成功' : '注册成功')
     await router.replace('/workspace')
   } catch {
     message.error(mode.value === 'login' ? '登录失败，请检查联系电话和密码' : '注册失败，联系电话或员工编号可能已存在')
+    if (mode.value === 'login') await refreshCaptcha()
   } finally { submitting.value = false }
 }
 
@@ -87,9 +106,6 @@ async function submitReset() {
       <a-form layout="vertical" @submit.prevent="submit">
         <template v-if="mode === 'register'">
           <a-form-item label="姓名"><a-input v-model:value="form.name" /></a-form-item>
-          <a-form-item label="员工编号"><a-input v-model:value="form.employeeNo" /></a-form-item>
-          <a-form-item label="所属部门"><a-input v-model:value="form.department" /></a-form-item>
-          <a-form-item label="电子邮箱（选填）"><a-input v-model:value="form.email" type="email" /></a-form-item>
         </template>
         <template v-if="mode === 'forgot'">
           <a-form-item label="联系电话"><a-input v-model:value="form.phone" :disabled="resetStep === 2" /></a-form-item>
@@ -103,6 +119,14 @@ async function submitReset() {
         <template v-else>
           <a-form-item label="联系电话"><a-input v-model:value="form.phone" /></a-form-item>
           <a-form-item label="密码"><a-input-password v-model:value="form.password" /></a-form-item>
+          <a-form-item v-if="mode === 'login'" label="验证码">
+            <div class="captcha-row">
+              <a-input v-model:value="form.captchaCode" maxlength="4" autocomplete="off" placeholder="请输入右侧字符" />
+              <button class="captcha-image" type="button" title="看不清？点击换一张" @click="refreshCaptcha">
+                <img v-if="captchaImage" :src="captchaImage" alt="图形验证码" />
+              </button>
+            </div>
+          </a-form-item>
           <a-form-item v-if="mode === 'register'" label="确认密码"><a-input-password v-model:value="form.confirm" /></a-form-item>
         </template>
         <a-button type="primary" html-type="submit" block size="large" :loading="submitting">{{ title }}</a-button>

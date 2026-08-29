@@ -13,9 +13,6 @@ export type CurrentUser = {
 
 export type RegisterInput = {
   name: string
-  email?: string
-  employeeNo: string
-  department: string
   phone: string
   password: string
 }

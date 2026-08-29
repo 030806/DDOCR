@@ -96,13 +96,18 @@ class RegisterCreate(BaseModel):
     email: str | None = Field(default=None, max_length=160)
     phone: str = Field(min_length=7, max_length=30)
     password: str = Field(min_length=8, max_length=128)
-    employee_no: str = Field(min_length=1, max_length=40)
+    employee_no: str | None = Field(default=None, max_length=40)
     department: str = Field(default="", max_length=100)
 
 
 class LoginCreate(BaseModel):
     phone: str = Field(min_length=7, max_length=30)
     password: str = Field(min_length=1, max_length=128)
+
+
+class CaptchaVerifyCreate(BaseModel):
+    captcha_id: str = Field(min_length=16, max_length=128)
+    code: str = Field(min_length=4, max_length=4, pattern=r"^[A-Za-z0-9]{4}$")
 
 
 class ProfileUpdate(BaseModel):

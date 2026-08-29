@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apiClient } from './client'
-import { getCurrentUser, login, requestPasswordReset, resetPassword, updateProfile } from './auth'
+import { getCaptcha, getCurrentUser, login, register, requestPasswordReset, resetPassword, updateProfile, verifyCaptcha } from './auth'
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
@@ -11,6 +11,27 @@ const apiUser = {
 }
 
 describe('auth API', () => {
+  it('registers with only the simplified account fields', async () => {
+    vi.stubGlobal('window', { localStorage: { setItem: vi.fn() } })
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: { data: { access_token: 'token-1', token_type: 'bearer', user: apiUser }, request_id: 'req-register' },
+    })
+    await register({ name: '林工', phone: '13800132607', password: 'Terminal123' })
+    expect(post).toHaveBeenCalledWith('/auth/register', {
+      name: '林工', phone: '13800132607', password: 'Terminal123',
+    })
+  })
+
+  it('gets and verifies a visual captcha', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue({
+      data: { data: { captcha_id: 'captcha-123456789', image: 'data:image/svg+xml;base64,abc', expires_in: 300 } },
+    })
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({})
+    expect((await getCaptcha()).expires_in).toBe(300)
+    await verifyCaptcha('captcha-123456789', 'A2B3')
+    expect(post).toHaveBeenCalledWith('/auth/captcha/verify', { captcha_id: 'captcha-123456789', code: 'A2B3' })
+  })
+
   it('logs in with a phone number and stores the token', async () => {
     const setItem = vi.fn()
     vi.stubGlobal('window', { localStorage: { setItem } })

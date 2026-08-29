@@ -6,6 +6,7 @@ from fastapi.responses import FileResponse
 from app.schemas.contracts import (
     CommentCreate,
     CommentUpdate,
+    CaptchaVerifyCreate,
     CorrectionCreate,
     ExportCreate,
     ForgotPasswordCreate,
@@ -47,6 +48,17 @@ def authenticated_user(request: Request, authorization: str | None) -> dict[str,
 @router.post("/auth/register", status_code=201)
 def register(body: RegisterCreate, request: Request) -> dict[str, Any]:
     return envelope(service(request).register_user(body.model_dump()))
+
+
+@router.get("/auth/captcha")
+def get_captcha(request: Request) -> dict[str, Any]:
+    return envelope(service(request).create_captcha())
+
+
+@router.post("/auth/captcha/verify")
+def verify_captcha(body: CaptchaVerifyCreate, request: Request) -> dict[str, Any]:
+    service(request).verify_captcha(body.captcha_id, body.code)
+    return envelope({"verified": True})
 
 
 @router.post("/auth/login")

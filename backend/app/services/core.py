@@ -3,6 +3,7 @@ import hmac
 import math
 import os
 import secrets
+import base64
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
@@ -60,6 +61,7 @@ class MockOcrService:
         self.comment_repository = CommentRepository(store.engine)
         self.export_repository = ExportRepository(store.engine)
         self.idempotency_repository = IdempotencyRepository(store.engine)
+        self._captchas: dict[str, tuple[str, datetime]] = {}
 
     @staticmethod
     def _password_hash(password: str, salt_hex: str | None = None) -> tuple[str, str]:
@@ -97,7 +99,9 @@ class MockOcrService:
             raise HTTPException(409, "Email is already registered")
         if self.users.find_by_phone(phone):
             raise HTTPException(409, "Phone is already registered")
-        if self.users.find_by_employee_no(values["employee_no"]):
+        employee_no = (values.get("employee_no") or "").strip() or f"USR-{secrets.token_hex(4).upper()}"
+        values["employee_no"] = employee_no
+        if self.users.find_by_employee_no(employee_no):
             raise HTTPException(409, "Employee number is already registered")
         salt, password_hash = self._password_hash(values.pop("password"))
         user_id = uid()
@@ -118,6 +122,28 @@ class MockOcrService:
         tenant_id = self.tenants.ensure_default()
         self.users.create(tenant_id, user)
         return self.create_session(user)
+
+    def create_captcha(self) -> dict[str, Any]:
+        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        code = "".join(secrets.choice(alphabet) for _ in range(4))
+        captcha_id = secrets.token_urlsafe(24)
+        self._captchas[captcha_id] = (code, datetime.now(UTC) + timedelta(minutes=5))
+        lines = "".join(
+            f'<line x1="{secrets.randbelow(80)}" y1="{secrets.randbelow(34)}" x2="{secrets.randbelow(80)}" y2="{secrets.randbelow(34)}" stroke="#8ab4a8"/>'
+            for _ in range(5)
+        )
+        svg = (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="112" height="40" viewBox="0 0 112 40">'
+            '<rect width="112" height="40" rx="6" fill="#eef7f4"/>' + lines +
+            f'<text x="56" y="28" text-anchor="middle" font-family="monospace" font-size="25" font-weight="700" letter-spacing="5" fill="#176b57">{code}</text></svg>'
+        )
+        image = "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
+        return {"captcha_id": captcha_id, "image": image, "expires_in": 300}
+
+    def verify_captcha(self, captcha_id: str, code: str) -> None:
+        challenge = self._captchas.pop(captcha_id, None)
+        if not challenge or challenge[1] < datetime.now(UTC) or not hmac.compare_digest(challenge[0], code.upper()):
+            raise HTTPException(400, "Invalid or expired captcha")
 
     def login_user(self, phone: str, password: str) -> dict[str, Any]:
         normalized = phone.strip()

@@ -31,10 +31,18 @@ export async function login(phone: string, password: string) {
   return storeSession(response.data.data)
 }
 
+export async function getCaptcha() {
+  const response = await apiClient.get<ApiEnvelope<{ captcha_id: string; image: string; expires_in: number }>>('/auth/captcha')
+  return response.data.data
+}
+
+export async function verifyCaptcha(captchaId: string, code: string) {
+  await apiClient.post('/auth/captcha/verify', { captcha_id: captchaId, code })
+}
+
 export async function register(input: RegisterInput) {
   const response = await apiClient.post<ApiEnvelope<ApiSession>>('/auth/register', {
-    name: input.name, email: input.email || null, employee_no: input.employeeNo,
-    department: input.department, phone: input.phone, password: input.password,
+    name: input.name, phone: input.phone, password: input.password,
   })
   return storeSession(response.data.data)
 }

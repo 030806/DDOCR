@@ -35,6 +35,8 @@ HTTP 错误：400 参数错误、401 未登录、403 无权限、404 不存在�
 |---|---|---|
 | POST | `/api/v1/auth/register` | 注册本地账号并返回 Bearer 会话 |
 | POST | `/api/v1/auth/login` | 使用联系电话和密码登录 |
+| GET | `/api/v1/auth/captcha` | 获取 4 位图形验证码，有效期 5 分钟 |
+| POST | `/api/v1/auth/captcha/verify` | 提交 `captcha_id` 和用户识别的 `code`，验证码仅可使用一次 |
 | GET | `/api/v1/users/me` | 当前用户、角色和权限 |
 | PATCH | `/api/v1/users/me` | 更新姓名、部门和联系电话 |
 | GET | `/api/v1/users/me/preferences` | 获取跨设备偏好，可选 |
@@ -45,7 +47,7 @@ HTTP 错误：400 参数错误、401 未登录、403 无权限、404 不存在�
 用户至少返回：`id, name, employee_no, role_names, permissions, department, email, phone_masked, avatar_url, last_login_at`，可包含 `tenant_id`。
 
 本地密码使用随机盐和 PBKDF2-SHA256 保存，任何响应均不得返回密码摘要。
-注册时联系电话必填且唯一，邮箱为可选字段。登录和注册返回
+注册时仅需姓名、联系电话和密码；联系电话必填且唯一，员工编号由系统自动生成。登录页面在调用原登录接口前先完成一次图形验证码校验。登录和注册返回
 `access_token, token_type, user`；用户资料、修改密码和退出
 使用 `Authorization: Bearer <access_token>`。
 

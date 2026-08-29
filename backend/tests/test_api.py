@@ -249,6 +249,28 @@ def test_register_login_profile_password_and_logout(tmp_path: Path) -> None:
     assert test_client.get("/api/v1/users/me", headers=headers).status_code == 401
 
 
+def test_simplified_registration_and_single_use_captcha(tmp_path: Path) -> None:
+    import base64
+    import re
+
+    test_client = client(tmp_path)
+    registration = test_client.post("/api/v1/auth/register", json={
+        "name": "精简注册用户", "phone": "13800139991", "password": "Simple123",
+    })
+    assert registration.status_code == 201
+    assert registration.json()["data"]["user"]["employee_no"].startswith("USR-")
+
+    captcha = test_client.get("/api/v1/auth/captcha")
+    assert captcha.status_code == 200
+    challenge = captcha.json()["data"]
+    assert challenge["image"].startswith("data:image/svg+xml;base64,")
+    svg = base64.b64decode(challenge["image"].split(",", 1)[1]).decode()
+    code = re.search(r">([A-Z2-9]{4})</text>", svg).group(1)
+    payload = {"captcha_id": challenge["captcha_id"], "code": code.lower()}
+    assert test_client.post("/api/v1/auth/captcha/verify", json=payload).status_code == 200
+    assert test_client.post("/api/v1/auth/captcha/verify", json=payload).status_code == 400
+
+
 def test_registration_rejects_duplicate_identity(tmp_path: Path) -> None:
     test_client = client(tmp_path)
     body = {
