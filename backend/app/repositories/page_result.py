@@ -84,6 +84,7 @@ class OCRResultRepository:
 
     def update_revision(self, item: dict[str, Any]) -> None:
         with Session(self.engine) as db, db.begin():
+            db.execute(update(ocr_jobs).where(ocr_jobs.c.id == item["job_id"]).values(result_version=ocr_jobs.c.result_version + 1))
             db.execute(update(results).where(results.c.id == item["id"]).values(
                 current_revision=item["revision"],
                 current_correction=item.get("current_correction"),
@@ -91,6 +92,8 @@ class OCRResultRepository:
 
     def update_review_status(self, result_ids: list[str], review_status: str) -> int:
         with Session(self.engine) as db, db.begin():
+            job_ids = select(results.c.job_id).where(results.c.id.in_(result_ids))
+            db.execute(update(ocr_jobs).where(ocr_jobs.c.id.in_(job_ids)).values(result_version=ocr_jobs.c.result_version + 1))
             result = db.execute(
                 update(results).where(results.c.id.in_(result_ids)).values(review_status=review_status)
             )
@@ -104,6 +107,8 @@ class OCRResultRepository:
         created_items: list[dict[str, Any]] = []
         deleted_ids: list[str] = []
         with Session(self.engine) as db, db.begin():
+            if updates or creates or deletes:
+                db.execute(update(ocr_jobs).where(ocr_jobs.c.id == page["job_id"]).values(result_version=ocr_jobs.c.result_version + 1))
             for edit in updates:
                 row = db.execute(select(results).where(results.c.id == edit["result_id"])).first()
                 if not row or row._mapping["page_id"] != page["id"]:
@@ -186,6 +191,7 @@ class OCRResultRepository:
         """Atomically replace results and finalize their page and job."""
         result_ids = [item["id"] for item in items]
         with Session(self.engine) as db, db.begin():
+            db.execute(update(ocr_jobs).where(ocr_jobs.c.id == job_id).values(result_version=ocr_jobs.c.result_version + 1))
             db.execute(delete(results).where(results.c.page_id == page_id))
             for item in items:
                 bbox = item["bbox"]

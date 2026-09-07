@@ -24,6 +24,32 @@ from app.models.store import Base
 
 JSON_VALUE = JSON().with_variant(JSONB(), "postgresql")
 
+# Dataset publication is separate from individual OCR result review flags.
+dataset_reviews = Table(
+    "dataset_reviews", Base.metadata,
+    Column("job_id", String(36), ForeignKey("ocr_jobs.id", ondelete="CASCADE"), primary_key=True),
+    Column("reviewed_version", Integer, nullable=False),
+    Column("reviewed_by", String(36), nullable=False),
+    Column("reviewed_at", String(40), nullable=False),
+    Column("snapshot", JSON_VALUE, nullable=False),
+    Column("source_sha256", String(64), nullable=False),
+    Column("image_revision", Integer, nullable=False, server_default="0"),
+    Column("saved_version", Integer),
+    Column("last_error", Text),
+)
+
+dataset_images = Table(
+    "dataset_images", Base.metadata,
+    Column("sequence", Integer, primary_key=True, autoincrement=True),
+    Column("image_id", String(40), unique=True),
+    Column("owner_id", String(36), nullable=False),
+    Column("sha256", String(64), nullable=False),
+    Column("revision", Integer, nullable=False, server_default="0"),
+    Column("job_id", String(36)),
+    Column("saved_version", Integer),
+    UniqueConstraint("owner_id", "sha256", name="uq_dataset_image_owner_hash"),
+)
+
 
 def id_column() -> Column[str]:
     return Column("id", String(36), primary_key=True)
@@ -187,6 +213,7 @@ ocr_jobs = Table(
     Column("review_count", Integer, nullable=False, server_default="0"),
     Column("name", String(500), nullable=False),
     Column("options_snapshot", JSON_VALUE, nullable=False, server_default="{}"),
+    Column("result_version", Integer, nullable=False, server_default="0"),
     Column("status", String(32), nullable=False, server_default="queued"),
     Column("stage", String(64), nullable=False, server_default="queued"),
     Column("review_status", String(32), nullable=False, server_default="unreviewed"),

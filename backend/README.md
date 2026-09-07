@@ -1,5 +1,7 @@
 # DDOCR Backend
 
+新增任务级复核及数据集入库功能，正式环境需执行 `python -m alembic upgrade head`（`d903_dataset_review`）。保存目录、接口、故障重试及重建命令见 [数据收集说明](../docs/11_Dataset_Collection.md)。
+
 FastAPI 后端，REST 接口统一位于 `/api/v1`。业务数据存储在 PostgreSQL，上传文件和导出文件仍保存在 `DDOCR_DATA_DIR` 指定的本地目录。
 
 ## PostgreSQL 配置

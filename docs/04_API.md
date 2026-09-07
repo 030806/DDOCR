@@ -273,3 +273,6 @@ result_count, review_count, created_by{id,name}, error
 | POST | `/api/v1/auth/reset-password` | 使用联系电话、验证码和新密码完成重置，成功返回 204 |
 
 验证码为 6 位数字，有效期 10 分钟，最多允许 5 次错误尝试；再次申请会使旧验证码失效。重置成功后撤销该用户全部已有会话。仅当 `DDOCR_EXPOSE_PASSWORD_RESET_CODE=true` 时，申请响应的 `data` 包含 `development_code` 供本地联调。生产环境必须关闭该配置并接入短信发送服务。
+# 任务复核与数据集入库扩展
+
+新增接口及请求示例见 [11_Dataset_Collection.md](11_Dataset_Collection.md)。已有 OCR、纠正、编辑与导出接口契约保持不变。

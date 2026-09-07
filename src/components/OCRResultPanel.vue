@@ -15,6 +15,9 @@ const props = defineProps<{
   lowConfidenceThreshold: number
   showConfidence: boolean
   canUndoReview: boolean
+  datasetReviewed?: boolean
+  datasetReviewSaving?: boolean
+  datasetReviewDisabled?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -24,6 +27,7 @@ const emit = defineEmits<{
   export: [mode: ExportMode]
   review: [ids: string[], status: OcrReviewStatus]
   undo: []
+  'complete-review': []
   'visible-change': [ids: string[]]
 }>()
 
@@ -163,7 +167,8 @@ watch(() => props.page.no, () => { selectedIds.value = []; coordinateSorted.valu
     </div>
     <footer class="results-footer">
       <button v-if="canUndoReview" class="footer-undo-btn" @click="emit('undo')"><UndoOutlined /> 撤销上一次结果操作</button>
-      <span>模型 {{ modelLabel }}</span>
+      <span class="dataset-review-hint">确认当前任务的文字和标注框已全部复核</span>
+      <a-button type="primary" :loading="datasetReviewSaving" :disabled="datasetReviewed || datasetReviewDisabled" @click="emit('complete-review')"><span style="color: #fff">{{ datasetReviewed ? '已复核' : '复核完成' }}</span></a-button>
     </footer>
   </aside>
 </template>

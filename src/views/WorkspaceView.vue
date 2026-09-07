@@ -9,6 +9,7 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter, type Navi
 import type { ModelOption, OcrItem, OcrPage, OcrPolygon, OcrReviewStatus } from '../types/ocr'
 import { createComment, createCorrection, createRegionOcrTask, deleteComment, getModels, getOcrPages, releasePageImages, saveResultEdits, updateComment, updateResultReviewStatus, uploadAndCreateOcrTask, uploadOcrFile, type RegionDraft } from '../api/ocr'
 import { createSplitLayout } from '../splitLayout'
+import { completeDatasetReview, getDatasetStatuses, type DatasetStatus } from '../api/dataset'
 import { exportOcrResults, type ExportMode } from '../exportResults'
 import UploadPanel from '../components/UploadPanel.vue'
 import DocumentViewer from '../components/DocumentViewer.vue'
@@ -43,6 +44,10 @@ const taskLoading = ref(false)
 const correctionOpen = ref(false)
 const commentOpen = ref(false)
 const reviewSaving = ref(false)
+const datasetStatus = ref<DatasetStatus>()
+const datasetReviewSaving = ref(false)
+const resultMutationSaving = ref(false)
+const bboxSaving = ref(false)
 const workspaceWidth = ref(typeof window === 'undefined' ? 1440 : window.innerWidth)
 const workspace = ref<{ $el: HTMLElement }>()
 const pages = ref<OcrPage[]>(initialContent.pages)
@@ -56,6 +61,7 @@ const bboxDraftItems = ref<EditableOcrItem[]>([])
 const bboxUndoStack = ref<EditableOcrItem[][]>([])
 const bboxRedoStack = ref<EditableOcrItem[][]>([])
 const bboxDirty = ref(false)
+const datasetReviewed = computed(() => !bboxDirty.value && !pendingGeometrySnapshot.value && datasetStatus.value && datasetStatus.value.state !== 'unreviewed')
 const pendingGeometrySnapshot = ref<EditableOcrItem[]>()
 const pendingGeometryId = ref('')
 const manualBbox = ref<OcrItem['bbox']>()
@@ -67,6 +73,7 @@ const regionJobSubmitting = ref(false)
 let autoRegionTaskId = ''
 let workspaceObserver: ResizeObserver | undefined
 let taskLoadSequence = 0
+let datasetStatusEpoch = 0
 const { task: polledTask, requestError: pollingError, elapsedMs, start: startPolling, stop: stopPolling, reset: resetPolling } = useOcrJobPolling()
 
 const page = computed(() => pages.value[currentPage.value - 1])
@@ -130,6 +137,11 @@ function handleBeforeUnload(event: BeforeUnloadEvent) {
 }
 
 function confirmBboxNavigation(next: NavigationGuardNext) {
+  if (datasetReviewSaving.value || bboxSaving.value) {
+    message.info('正在保存，请完成后再切换任务')
+    next(false)
+    return
+  }
   if (!bboxEditMode.value || (!bboxDirty.value && !pendingGeometrySnapshot.value)) { next(); return }
   Modal.confirm({
     title: '存在未保存的检测框修改',
@@ -163,6 +175,7 @@ async function loadCompletedTask(task: NonNullable<typeof polledTask.value>, seq
     if (sequence !== taskLoadSequence) { releasePageImages(taskPages); return }
     releasePageImages(pages.value)
     pages.value = taskPages
+    void refreshDatasetStatus(task.id)
     ensureTaskModel(task)
     currentPage.value = 1
     const candidates = taskPages[0]?.items || []
@@ -215,6 +228,7 @@ function retryTask(): void {
 }
 
 watch(() => route.params.taskId, (taskId) => {
+  datasetStatus.value = undefined
   const sequence = ++taskLoadSequence
   resetPolling()
   releasePageImages(pages.value)
@@ -377,6 +391,7 @@ function deleteSelectedDraft() {
 }
 
 function handleBboxKeyboard(event: KeyboardEvent) {
+  if (datasetReviewSaving.value || bboxSaving.value) return
   if (!bboxEditMode.value || ['INPUT', 'TEXTAREA'].includes((event.target as HTMLElement)?.tagName)) return
   if ((event.key === 'Delete' || event.key === 'Backspace') && selectedId.value) { event.preventDefault(); deleteSelectedDraft() }
   else if (event.ctrlKey && event.key.toLowerCase() === 'z' && !event.shiftKey) { event.preventDefault(); undoBboxEdit() }
@@ -384,14 +399,17 @@ function handleBboxKeyboard(event: KeyboardEvent) {
 }
 
 async function saveBboxEdits() {
+  if (bboxSaving.value) return
   const taskId = route.params.taskId
   if (typeof taskId !== 'string' || !page.value) return
   if (pendingGeometrySnapshot.value) { message.warning('请先确认或取消当前检测框修改'); return }
   const updates = bboxDraftItems.value.filter(item => item.editOperation === 'updated').map(item => ({ result_id: item.id, bbox: item.bbox, polygon: item.polygon, base_revision: item.geometryRevision || 0 }))
   const creates = bboxDraftItems.value.filter(item => item.editOperation === 'created').map(item => ({ client_id: item.id, bbox: item.bbox, polygon: item.polygon, text: item.text }))
-  const deletes = bboxDraftItems.value.filter(item => item.editOperation === 'deleted' && item.editSource !== 'manual').map(item => ({ result_id: item.id }))
+  const deletes = bboxDraftItems.value.filter(item => item.editOperation === 'deleted').map(item => ({ result_id: item.id }))
+  bboxSaving.value = true
   try {
     await saveResultEdits(taskId, page.value.no, { updates, creates, deletes })
+    invalidateDatasetReview()
     const refreshed = await getOcrPages(taskId)
     releasePageImages(pages.value)
     pages.value = refreshed
@@ -402,26 +420,36 @@ async function saveBboxEdits() {
     message.success('检测框修改已保存')
   } catch (error) {
     message.error(isAxiosError(error) && error.response?.status === 409 ? '检测框已被其他用户修改，请刷新后重试' : '检测框修改保存失败')
+  } finally {
+    bboxSaving.value = false
   }
 }
 
 async function reviewResults(ids: string[], status: OcrReviewStatus) {
+  if (resultMutationSaving.value || datasetReviewSaving.value) return
   const changed = pages.value.flatMap(ocrPage => ocrPage.items).filter(item => ids.includes(item.id))
   if (!changed.length) return
   const previous = changed.map(item => ({ id: item.id, status: item.reviewStatus || 'unreviewed' as OcrReviewStatus }))
+  resultMutationSaving.value = true
   try {
     await updateResultReviewStatus(ids, status)
+    invalidateDatasetReview()
     changed.forEach(item => { item.reviewStatus = status })
     lastReviewAction.value = previous
     message.success(status === 'deleted' ? `已删除 ${changed.length} 条结果` : status === 'false_positive' ? `已标记 ${changed.length} 条误检` : `已恢复 ${changed.length} 条结果`)
   } catch {
     message.error('结果状态保存失败，请重试')
+  } finally {
+    resultMutationSaving.value = false
   }
 }
 
 async function undoReviewAction() {
+  if (resultMutationSaving.value || datasetReviewSaving.value) return
   const action = lastReviewAction.value
   if (!action) return
+  resultMutationSaving.value = true
+  invalidateDatasetReview()
   try {
     for (const status of ['unreviewed', 'confirmed', 'false_positive', 'deleted'] as OcrReviewStatus[]) {
       const ids = action.filter(item => item.status === status).map(item => item.id)
@@ -434,6 +462,48 @@ async function undoReviewAction() {
     lastReviewAction.value = undefined
     message.success('已撤销上一次结果操作')
   } catch { message.error('撤销失败，请重试') }
+  finally { resultMutationSaving.value = false }
+}
+
+function invalidateDatasetReview() {
+  datasetStatusEpoch++
+  if (datasetStatus.value) datasetStatus.value = { ...datasetStatus.value, state: 'unreviewed' }
+}
+
+async function refreshDatasetStatus(taskId: string) {
+  const epoch = datasetStatusEpoch
+  try {
+    const [status] = await getDatasetStatuses([taskId])
+    if (route.params.taskId === taskId && epoch === datasetStatusEpoch) datasetStatus.value = status
+  } catch {
+    if (route.params.taskId === taskId) datasetStatus.value = undefined
+  }
+}
+
+async function finishDatasetReview() {
+  const taskId = route.params.taskId
+  if (typeof taskId !== 'string' || datasetReviewSaving.value || reviewSaving.value || resultMutationSaving.value || bboxSaving.value) return
+  if (correctionOpen.value || manualTextOpen.value || pendingGeometrySnapshot.value) {
+    message.warning('请先完成当前文字或检测框编辑')
+    return
+  }
+  datasetReviewSaving.value = true
+  try {
+    if (bboxDirty.value) {
+      await saveBboxEdits()
+      if (bboxDirty.value) return
+    }
+    const epoch = datasetStatusEpoch
+    const status = await completeDatasetReview(taskId, pages.value)
+    if (route.params.taskId !== taskId || epoch !== datasetStatusEpoch) return
+    datasetStatus.value = status
+    message.success('复核完成，可到任务记录页入库')
+  } catch (error) {
+    invalidateDatasetReview()
+    message.error(isAxiosError(error) ? error.response?.data?.error?.message || '复核失败，请刷新后重试' : '复核失败，请重试')
+  } finally {
+    datasetReviewSaving.value = false
+  }
 }
 
 async function runOcr() {
@@ -518,6 +588,7 @@ async function saveCorrection(text: string) {
   reviewSaving.value = true
   try {
     const correction = await createCorrection(selectedItem.value.id, text, selectedItem.value.revision || 0)
+    invalidateDatasetReview()
     selectedItem.value.corrected = correction.corrected_text
     selectedItem.value.revision = correction.revision
     correctionOpen.value = false
@@ -602,7 +673,7 @@ async function handleExport(mode: ExportMode) {
 </script>
 
 <template>
-  <div class="workspace-view">
+  <div class="workspace-view" :inert="datasetReviewSaving || bboxSaving">
     <UploadPanel :models="availableModels" :selected-model="selectedModel" :current-model="currentModel" :job-state="jobState" :progress="progress" :file-name="selectedFileName" :file-meta="selectedFileMeta" :has-file="Boolean(selectedFile)" @update:selected-model="selectedModel = $event" @upload="handleUpload" @preview="previewUpload" @run="runOcr" @region-run="openUploadRegionJob" />
     <div v-if="taskLoading" class="workspace-empty"><a-spin size="large" /><p>正在加载任务数据…</p></div>
     <OcrProgressCard v-else-if="polledTask && !['succeeded', 'partial_success'].includes(polledTask.jobStatus || 'queued')" :task="polledTask" :elapsed-ms="elapsedMs" :request-failed="Boolean(pollingError)" @retry="retryTask" />
@@ -613,7 +684,7 @@ async function handleExport(mode: ExportMode) {
         </div>
       </Pane>
       <Pane :size="splitLayout.resultSizePercent" :min-size="splitLayout.resultMinPercent">
-        <OCRResultPanel v-if="resultPanelPage" :page="resultPanelPage" :pages="pages" :selected-id="selectedId" :model-label="currentModel?.label || selectedModel" :low-confidence-threshold="settings.lowConfidenceThreshold" :show-confidence="settings.showConfidence" :can-undo-review="Boolean(lastReviewAction)" @select="selectItem" @correct="openCorrection" @comment="openComment" @export="handleExport" @review="reviewResults" @visible-change="visibleResultIds = $event" @undo="undoReviewAction" />
+        <OCRResultPanel v-if="resultPanelPage" :page="resultPanelPage" :pages="pages" :selected-id="selectedId" :model-label="currentModel?.label || selectedModel" :low-confidence-threshold="settings.lowConfidenceThreshold" :show-confidence="settings.showConfidence" :can-undo-review="Boolean(lastReviewAction)" :dataset-reviewed="Boolean(datasetReviewed)" :dataset-review-saving="datasetReviewSaving" :dataset-review-disabled="jobState !== 'done' || taskLoading || reviewSaving || resultMutationSaving || bboxSaving || correctionOpen || manualTextOpen || Boolean(pendingGeometrySnapshot)" @complete-review="finishDatasetReview" @select="selectItem" @correct="openCorrection" @comment="openComment" @export="handleExport" @review="reviewResults" @visible-change="visibleResultIds = $event" @undo="undoReviewAction" />
       </Pane>
     </Splitpanes>
     <div v-else class="workspace-empty">
