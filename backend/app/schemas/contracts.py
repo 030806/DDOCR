@@ -55,6 +55,13 @@ class ResultReviewStatusUpdate(BaseModel):
     review_status: Literal["unreviewed", "confirmed", "false_positive", "deleted"]
 
 
+class ResultTableUpdate(BaseModel):
+    terminal_number: str = Field(max_length=500)
+    manual_confirmed: bool
+    table_note: str = Field(max_length=1000)
+    base_revision: int = Field(ge=0)
+
+
 class ResultGeometryUpdate(BaseModel):
     result_id: str
     bbox: tuple[float, float, float, float]

@@ -1,10 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apiClient } from './client'
-import { createComment, createCorrection, createRegionOcrTask, deleteComment, deleteTask, exportTaskResults, getModels, getOcrPages, mapApiJob, mapApiResult, saveResultEdits, updateComment, updateResultReviewStatus, uploadAndCreateOcrTask } from './ocr'
+import { createComment, createCorrection, createRegionOcrTask, deleteComment, deleteTask, exportTaskResults, getModels, getOcrPages, mapApiJob, mapApiResult, saveResultEdits, updateComment, updateResultReviewStatus, updateResultTable, uploadAndCreateOcrTask } from './ocr'
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('OCR API adapters', () => {
+  it('maps and saves editable table fields with their own revision', async () => {
+    const item = mapApiResult({ id: 'r1', text: 'C-1', confidence: 0.9, bbox: [1, 2, 3, 4], display_text: 'C-1', is_corrected: false, comments: [], revision: 0, terminal_number: 'X1', manual_confirmed: true, table_note: '核对', table_revision: 3 })
+    expect([item.terminalNumber, item.manualConfirmed, item.tableNote, item.tableRevision]).toEqual(['X1', true, '核对', 3])
+    const patch = vi.spyOn(apiClient, 'patch').mockResolvedValueOnce({ data: { data: { terminal_number: 'X2', manual_confirmed: false, table_note: '', table_revision: 4 } } } as never)
+    await updateResultTable(item, { terminalNumber: 'X2', manualConfirmed: false, tableNote: '' })
+    expect(patch).toHaveBeenCalledWith('/ocr/results/r1/table', { terminal_number: 'X2', manual_confirmed: false, table_note: '', base_revision: 3 })
+  })
   it('deletes a persisted OCR task through the jobs API', async () => {
     const remove = vi.spyOn(apiClient, 'delete').mockResolvedValue({} as never)
     await deleteTask('job-1')

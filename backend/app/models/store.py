@@ -56,6 +56,15 @@ class Store:
                     "ALTER TABLE results ADD COLUMN geometry_revision INTEGER "
                     "NOT NULL DEFAULT 0"
                 ))
+        for name, definition in (
+            ("terminal_number", "VARCHAR(500) NOT NULL DEFAULT ''"),
+            ("manual_confirmed", "BOOLEAN NOT NULL DEFAULT 0"),
+            ("table_note", "VARCHAR(1000) NOT NULL DEFAULT ''"),
+            ("table_revision", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            if name not in result_columns:
+                with self.engine.begin() as connection:
+                    connection.execute(text(f"ALTER TABLE results ADD COLUMN {name} {definition}"))
 
     def put(
         self,

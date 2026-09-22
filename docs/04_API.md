@@ -276,3 +276,8 @@ result_count, review_count, created_by{id,name}, error
 # 任务复核与数据集入库扩展
 
 新增接口及请求示例见 [11_Dataset_Collection.md](11_Dataset_Collection.md)。已有 OCR、纠正、编辑与导出接口契约保持不变。
+## 结果表格字段
+
+`GET /ocr/jobs/{job_id}/pages/{page_no}/results` 的每条结果新增 `terminal_number`（字符串）、`manual_confirmed`（布尔）、`table_note`（字符串）和 `table_revision`（整数）。线缆编号继续使用已有 `display_text`，编辑时调用已有纠正接口。
+
+`PATCH /ocr/results/{result_id}/table` 需登录且仅允许任务所有者调用。请求体为 `{"terminal_number":"X1","manual_confirmed":true,"table_note":"已核对","base_revision":0}`，响应包含结果 ID、三个字段和递增的 `table_revision`。修订号过期返回 409；端子号最多 500 字符，备注最多 1000 字符。

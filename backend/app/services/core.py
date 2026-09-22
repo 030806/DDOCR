@@ -631,6 +631,24 @@ class MockOcrService:
         self.result_repository.update_review_status(unique_ids, review_status)
         return [{"id": result_id, "review_status": review_status} for result_id in unique_ids]
 
+    def update_result_table(self, result_id: str, body: Any, owner_id: str) -> dict[str, Any]:
+        self.result(result_id, owner_id)
+        updated = self.result_repository.update_table_fields(result_id, body.base_revision, {
+            "terminal_number": body.terminal_number,
+            "manual_confirmed": body.manual_confirmed,
+            "table_note": body.table_note,
+        })
+        if updated is None:
+            latest = self.result(result_id, owner_id)
+            raise HTTPException(409, detail={
+                "message": "Table result was changed by another user",
+                "current_revision": latest["table_revision"],
+                "terminal_number": latest["terminal_number"],
+                "manual_confirmed": latest["manual_confirmed"],
+                "table_note": latest["table_note"],
+            })
+        return {key: updated[key] for key in ("id", "terminal_number", "manual_confirmed", "table_note", "table_revision")}
+
     @staticmethod
     def _validated_bbox(bbox: Any, width: float, height: float) -> list[float]:
         values = [float(value) for value in bbox]

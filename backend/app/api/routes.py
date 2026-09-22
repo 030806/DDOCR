@@ -18,6 +18,7 @@ from app.schemas.contracts import (
     ProfileUpdate,
     RegisterCreate,
     ResultReviewStatusUpdate,
+    ResultTableUpdate,
     ResultEditsCreate,
     UploadSessionCreate,
 )
@@ -386,6 +387,15 @@ def update_result_review_status(
         body.result_ids, body.review_status, actor["id"],
     )
     return envelope({"updated_count": len(items), "items": items})
+
+
+@router.patch("/ocr/results/{result_id}/table")
+def update_result_table(
+    result_id: str, body: ResultTableUpdate, request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
+    actor = authenticated_user(request, authorization)
+    return envelope(service(request).update_result_table(result_id, body, actor["id"]))
 
 
 @router.post("/ocr/jobs/{job_id}/pages/{page_no}/result-edits")

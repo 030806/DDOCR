@@ -26,6 +26,10 @@ export type OcrItem = {
   reviewStatus?: OcrReviewStatus
   editSource?: 'ocr' | 'manual'
   geometryRevision?: number
+  terminalNumber?: string
+  manualConfirmed?: boolean
+  tableNote?: string
+  tableRevision?: number
 }
 
 export type OcrReviewStatus = 'unreviewed' | 'confirmed' | 'false_positive' | 'deleted'

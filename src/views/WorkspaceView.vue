@@ -7,7 +7,7 @@ import { Pane, Splitpanes } from 'splitpanes'
 import 'splitpanes/dist/splitpanes.css'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter, type NavigationGuardNext } from 'vue-router'
 import type { ModelOption, OcrItem, OcrPage, OcrPolygon, OcrReviewStatus } from '../types/ocr'
-import { createComment, createCorrection, createRegionOcrTask, deleteComment, getModels, getOcrPages, releasePageImages, saveResultEdits, updateComment, updateResultReviewStatus, uploadAndCreateOcrTask, uploadOcrFile, type RegionDraft } from '../api/ocr'
+import { createComment, createCorrection, createRegionOcrTask, deleteComment, getModels, getOcrPages, releasePageImages, saveResultEdits, updateComment, updateResultReviewStatus, updateResultTable, uploadAndCreateOcrTask, uploadOcrFile, type RegionDraft } from '../api/ocr'
 import { createSplitLayout } from '../splitLayout'
 import { completeDatasetReview, getDatasetStatuses, type DatasetStatus } from '../api/dataset'
 import { exportOcrResults, type ExportMode } from '../exportResults'
@@ -50,6 +50,7 @@ const resultMutationSaving = ref(false)
 const bboxSaving = ref(false)
 const workspaceWidth = ref(typeof window === 'undefined' ? 1440 : window.innerWidth)
 const workspace = ref<{ $el: HTMLElement }>()
+const resultPanel = ref<{ hasPendingEdits: () => boolean }>()
 const pages = ref<OcrPage[]>(initialContent.pages)
 const selectedFile = ref<File>()
 const pendingFile = ref<File>()
@@ -131,7 +132,7 @@ onBeforeUnmount(() => {
 })
 
 function handleBeforeUnload(event: BeforeUnloadEvent) {
-  if (!bboxDirty.value && !pendingGeometrySnapshot.value) return
+  if (!bboxDirty.value && !pendingGeometrySnapshot.value && !resultPanel.value?.hasPendingEdits()) return
   event.preventDefault()
   event.returnValue = ''
 }
@@ -140,6 +141,10 @@ function confirmBboxNavigation(next: NavigationGuardNext) {
   if (datasetReviewSaving.value || bboxSaving.value) {
     message.info('正在保存，请完成后再切换任务')
     next(false)
+    return
+  }
+  if (resultPanel.value?.hasPendingEdits()) {
+    Modal.confirm({ title: '表格中有未保存的修改', content: '请重试保存失败的单元格，或确认放弃这些修改。', okText: '放弃并离开', cancelText: '继续编辑', onOk: () => next(), onCancel: () => next(false) })
     return
   }
   if (!bboxEditMode.value || (!bboxDirty.value && !pendingGeometrySnapshot.value)) { next(); return }
@@ -263,6 +268,10 @@ function selectItem(id: string) {
 }
 
 function switchPage(no: number) {
+  if (resultPanel.value?.hasPendingEdits()) {
+    message.warning('请先完成表格修改，或重试保存失败的单元格')
+    return
+  }
   if (bboxEditMode.value && (bboxDirty.value || pendingGeometrySnapshot.value)) {
     message.warning('请先保存或退出检测框编辑模式')
     return
@@ -583,6 +592,38 @@ async function submitRegionJob(name: string, regions: RegionDraft[]) {
 }
 
 function openCorrection(item: OcrItem) { selectItem(item.id); correctionOpen.value = true }
+async function saveTableCell(item: OcrItem, values: { terminalNumber: string; manualConfirmed: boolean; tableNote: string }) {
+  let saved
+  try { saved = await updateResultTable(item, values) }
+  catch (error) {
+    const details = isAxiosError(error) ? error.response?.data?.error?.details : undefined
+    if (isAxiosError(error) && error.response?.status === 409 && details) {
+      item.tableRevision = details.current_revision
+      message.warning('该结果已被其他用户修改，请核对输入后重试')
+    }
+    throw error
+  }
+  item.terminalNumber = saved.terminal_number
+  item.manualConfirmed = saved.manual_confirmed
+  item.tableNote = saved.table_note
+  item.tableRevision = saved.table_revision
+  invalidateDatasetReview()
+}
+async function saveCableCell(item: OcrItem, text: string) {
+  let saved
+  try { saved = await createCorrection(item.id, text, item.revision || 0) }
+  catch (error) {
+    const details = isAxiosError(error) ? error.response?.data?.error?.details : undefined
+    if (isAxiosError(error) && error.response?.status === 409 && details) {
+      item.revision = details.current_revision
+      message.warning('识别文字已被其他用户修改，请核对输入后重试')
+    }
+    throw error
+  }
+  item.corrected = saved.corrected_text
+  item.revision = saved.revision
+  invalidateDatasetReview()
+}
 async function saveCorrection(text: string) {
   if (!selectedItem.value) return
   reviewSaving.value = true
@@ -684,7 +725,7 @@ async function handleExport(mode: ExportMode) {
         </div>
       </Pane>
       <Pane :size="splitLayout.resultSizePercent" :min-size="splitLayout.resultMinPercent">
-        <OCRResultPanel v-if="resultPanelPage" :page="resultPanelPage" :pages="pages" :selected-id="selectedId" :model-label="currentModel?.label || selectedModel" :low-confidence-threshold="settings.lowConfidenceThreshold" :show-confidence="settings.showConfidence" :can-undo-review="Boolean(lastReviewAction)" :dataset-reviewed="Boolean(datasetReviewed)" :dataset-review-saving="datasetReviewSaving" :dataset-review-disabled="jobState !== 'done' || taskLoading || reviewSaving || resultMutationSaving || bboxSaving || correctionOpen || manualTextOpen || Boolean(pendingGeometrySnapshot)" @complete-review="finishDatasetReview" @select="selectItem" @correct="openCorrection" @comment="openComment" @export="handleExport" @review="reviewResults" @visible-change="visibleResultIds = $event" @undo="undoReviewAction" />
+        <OCRResultPanel v-if="resultPanelPage" ref="resultPanel" :save-table="saveTableCell" :save-cable="saveCableCell" :page="resultPanelPage" :pages="pages" :selected-id="selectedId" :model-label="currentModel?.label || selectedModel" :low-confidence-threshold="settings.lowConfidenceThreshold" :show-confidence="settings.showConfidence" :can-undo-review="Boolean(lastReviewAction)" :dataset-reviewed="Boolean(datasetReviewed)" :dataset-review-saving="datasetReviewSaving" :dataset-review-disabled="jobState !== 'done' || taskLoading || reviewSaving || resultMutationSaving || bboxSaving || correctionOpen || manualTextOpen || Boolean(pendingGeometrySnapshot)" @complete-review="finishDatasetReview" @select="selectItem" @correct="openCorrection" @comment="openComment" @export="handleExport" @review="reviewResults" @visible-change="visibleResultIds = $event" @undo="undoReviewAction" />
       </Pane>
     </Splitpanes>
     <div v-else class="workspace-empty">

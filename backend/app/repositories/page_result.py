@@ -30,6 +30,10 @@ def _result_dict(row: Any) -> dict[str, Any]:
         "attributes": dict(m["attributes"] or {}),
         "review_status": m["review_status"],
         "geometry_revision": m["geometry_revision"],
+        "terminal_number": m["terminal_number"],
+        "manual_confirmed": m["manual_confirmed"],
+        "table_note": m["table_note"],
+        "table_revision": m["table_revision"],
         "revision": m["current_revision"], "current_correction": m["current_correction"],
     }
 
@@ -81,6 +85,18 @@ class OCRResultRepository:
         with Session(self.engine) as db:
             row = db.execute(select(results).where(results.c.id == result_id)).first()
             return _result_dict(row) if row else None
+
+    def update_table_fields(self, result_id: str, base_revision: int, values: dict[str, Any]) -> dict[str, Any] | None:
+        with Session(self.engine) as db, db.begin():
+            updated = db.execute(
+                update(results).where(results.c.id == result_id, results.c.table_revision == base_revision)
+                .values(**values, table_revision=base_revision + 1)
+            )
+            if not updated.rowcount:
+                return None
+            job_id = db.execute(select(results.c.job_id).where(results.c.id == result_id)).scalar_one()
+            db.execute(update(ocr_jobs).where(ocr_jobs.c.id == job_id).values(result_version=ocr_jobs.c.result_version + 1))
+        return self.get(result_id)
 
     def update_revision(self, item: dict[str, Any]) -> None:
         with Session(self.engine) as db, db.begin():

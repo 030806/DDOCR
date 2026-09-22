@@ -414,6 +414,23 @@ def test_review_status_is_persisted_and_excluded_from_export(tmp_path: Path) -> 
     assert restored.json()["data"]["updated_count"] == 2
 
 
+def test_result_table_fields_persist_and_reject_stale_revision(tmp_path: Path) -> None:
+    test_client = client(tmp_path)
+    job_id, headers = workflow(test_client)
+    url = f"/api/v1/ocr/jobs/{job_id}/pages/1/results"
+    item = test_client.get(url, headers=headers).json()["data"]["items"][0]
+    assert item["terminal_number"] == ""
+    assert item["manual_confirmed"] is False
+    path = f"/api/v1/ocr/results/{item['id']}/table"
+    payload = {"terminal_number": "X1", "manual_confirmed": True, "table_note": "已核对", "base_revision": 0}
+    saved = test_client.patch(path, headers=headers, json=payload)
+    assert saved.status_code == 200
+    assert saved.json()["data"]["table_revision"] == 1
+    reloaded = test_client.get(url, headers=headers).json()["data"]["items"][0]
+    assert (reloaded["terminal_number"], reloaded["manual_confirmed"], reloaded["table_note"]) == ("X1", True, "已核对")
+    assert test_client.patch(path, headers=headers, json=payload).status_code == 409
+
+
 def test_batch_result_geometry_edits_update_create_and_delete(tmp_path: Path) -> None:
     test_client = client(tmp_path)
     job_id, headers = workflow(test_client)

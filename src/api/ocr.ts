@@ -58,6 +58,10 @@ type ApiResult = {
   revision: number
   review_status?: OcrReviewStatus
   geometry_revision?: number
+  terminal_number?: string
+  manual_confirmed?: boolean
+  table_note?: string
+  table_revision?: number
   attributes?: { source?: string }
 }
 
@@ -187,6 +191,10 @@ export function mapApiResult(result: ApiResult): OcrItem {
     reviewStatus: result.review_status || 'unreviewed',
     editSource: result.attributes?.source === 'manual' ? 'manual' : 'ocr',
     geometryRevision: result.geometry_revision || 0,
+    terminalNumber: result.terminal_number || '',
+    manualConfirmed: result.manual_confirmed || false,
+    tableNote: result.table_note || '',
+    tableRevision: result.table_revision || 0,
   }
 }
 
@@ -195,6 +203,18 @@ export async function updateResultReviewStatus(resultIds: string[], reviewStatus
     '/ocr/results/review-status',
     { result_ids: resultIds, review_status: reviewStatus },
   )
+  return response.data.data
+}
+
+export async function updateResultTable(item: OcrItem, values: { terminalNumber: string; manualConfirmed: boolean; tableNote: string }) {
+  const response = await apiClient.patch<ApiEnvelope<{
+    terminal_number: string; manual_confirmed: boolean; table_note: string; table_revision: number
+  }>>(`/ocr/results/${item.id}/table`, {
+    terminal_number: values.terminalNumber,
+    manual_confirmed: values.manualConfirmed,
+    table_note: values.tableNote,
+    base_revision: item.tableRevision || 0,
+  })
   return response.data.data
 }
 
