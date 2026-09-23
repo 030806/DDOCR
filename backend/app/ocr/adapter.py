@@ -197,9 +197,11 @@ class OcrAdapter:
         confidence, confidence_attributes = _normalize_confidence(
             detection.ocr_score
         )
+        # Keep detected text visible when terminal-code rules cannot resolve it.
+        # The unresolved flag and assessment still preserve the review decision.
         text = (
             detection.raw_text
-            if detection.output_text is None
+            if detection.output_text in (None, "")
             else detection.output_text
         )
         assessment = _json_safe(detection.assessment)

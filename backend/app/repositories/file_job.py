@@ -153,3 +153,17 @@ class OCRJobRepository:
         if item is None:
             raise KeyError(f"OCR job not found: {job_id}")
         return item
+
+    def update_options(self, job_id: str, options: dict[str, Any]) -> dict[str, Any]:
+        """Update internal job lineage metadata without changing OCR results."""
+
+        with Session(self.engine) as db, db.begin():
+            db.execute(
+                update(ocr_jobs)
+                .where(ocr_jobs.c.id == job_id)
+                .values(options_snapshot=options, updated_at=datetime.now(UTC))
+            )
+        item = self.get(job_id)
+        if item is None:
+            raise KeyError(f"OCR job not found: {job_id}")
+        return item

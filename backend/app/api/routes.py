@@ -11,6 +11,7 @@ from app.schemas.contracts import (
     ExportCreate,
     ForgotPasswordCreate,
     JobCreate,
+    JobRerunCreate,
     RegionJobCreate,
     LoginCreate,
     PasswordChange,
@@ -241,6 +242,17 @@ def create_job(
     return envelope(job_data)
 
 
+@router.post("/ocr/jobs/{job_id}/rerun", status_code=202)
+def rerun_job(
+    job_id: str,
+    body: JobRerunCreate,
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
+    actor = authenticated_user(request, authorization)
+    return envelope(service(request).rerun_job(job_id, body, actor["id"]))
+
+
 @router.post("/ocr/region-jobs", status_code=202)
 def create_region_job(
     body: RegionJobCreate,
@@ -276,7 +288,9 @@ def jobs(
     all_jobs = service(request).all_jobs()
     items = [
         job for job in all_jobs
-        if job.get("owner_id") == actor["id"] and not job.get("deleted")
+        if job.get("owner_id") == actor["id"]
+        and not job.get("deleted")
+        and not job.get("options", {}).get("superseded_by_job_id")
     ]
     if query:
         normalized_query = query.lower()

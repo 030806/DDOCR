@@ -152,3 +152,8 @@ Worker 查询区域上下文；普通任务继续调用 `recognize_file`，区�
 # 数据库与迁移
 
 后端业务数据已接入 PostgreSQL，连接串通过 `DDOCR_DATABASE_URL` 配置，数据库结构由 Alembic 管理。开发环境初始化、升级和回退命令见 `backend/README.md`。上传原文件与 Excel 导出物仍写入 `DDOCR_DATA_DIR`，数据库保存其元数据及相对路径。
+# 端子排任务数据层
+
+新增 `terminal_tasks/terminal_sides/terminal_reviews/terminal_events`，引用现有单侧 OCR 数据。
+迁移版本 `f280_terminal_tasks`；匹配、复核摘要、事件审计和导出快照由 `TerminalService` 统一处理。
+详见 [左右侧任务数据库与部署](12_Terminal_Side_Tasks.md#数据库与部署)。

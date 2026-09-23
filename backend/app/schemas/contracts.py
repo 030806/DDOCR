@@ -18,6 +18,11 @@ class JobCreate(BaseModel):
     options: dict[str, Any] = Field(default_factory=dict)
 
 
+class JobRerunCreate(BaseModel):
+    model_id: str
+    model_version: str
+
+
 class RegionJobRegionCreate(BaseModel):
     client_id: str = Field(min_length=1, max_length=100)
     bbox: tuple[float, float, float, float]

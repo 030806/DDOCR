@@ -62,7 +62,7 @@ type ApiResult = {
   manual_confirmed?: boolean
   table_note?: string
   table_revision?: number
-  attributes?: { source?: string }
+  attributes?: { source?: string; is_unresolved?: boolean }
 }
 
 type ApiCorrection = {
@@ -195,6 +195,7 @@ export function mapApiResult(result: ApiResult): OcrItem {
     manualConfirmed: result.manual_confirmed || false,
     tableNote: result.table_note || '',
     tableRevision: result.table_revision || 0,
+    needsRawTextReview: result.attributes?.is_unresolved === true,
   }
 }
 
@@ -393,6 +394,18 @@ export async function uploadAndCreateOcrTask(
 
   onStage?.('job', 100)
   return jobResponse.data.data.id
+}
+
+// 复用历史任务的原始文件创建一次完整识别，无需浏览器重新上传。
+export async function rerunOcrTask(
+  taskId: string,
+  model: Pick<ModelOption, 'value' | 'version'>,
+): Promise<string> {
+  const response = await apiClient.post<ApiEnvelope<ApiCreatedJob>>(`/ocr/jobs/${taskId}/rerun`, {
+    model_id: model.value,
+    model_version: model.version,
+  })
+  return response.data.data.id
 }
 
 export async function uploadOcrFile(

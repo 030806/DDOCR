@@ -15,7 +15,7 @@ let taskLoadSequence = 0
 
 watch(() => route.params.taskId, async (taskId) => {
   const sequence = ++taskLoadSequence
-  if (typeof taskId !== 'string') {
+  if (typeof taskId !== 'string' || !taskId) {
     workspaceFile.value = '暂无任务'
     return
   }
@@ -38,9 +38,11 @@ watch(() => route.params.taskId, async (taskId) => {
     <div class="project-chip">
       <span class="pulse"></span>
       <template v-if="isTasksPage">任务记录 <b>/</b> 历史 OCR 任务</template>
+      <template v-else-if="route.path.startsWith('/terminal-tasks')">端子排任务 <b>/</b> 左右侧识别与合并</template>
       <template v-else>产线文档检测台 <b>/</b> {{ workspaceFile }}</template>
     </div>
     <nav class="top-actions">
+      <button :class="{ active: route.path.startsWith('/terminal-tasks') }" @click="router.push('/terminal-tasks')">端子排任务</button>
       <button :class="{ active: isTasksPage }" @click="router.push('/tasks')"><HistoryOutlined /> 任务记录</button>
       <button @click="emit('openSettings')"><SettingOutlined /> 设置</button>
       <UserMenu />

@@ -107,6 +107,7 @@ class OcrTaskWorker:
                 review_count=review_count, processing_ms=result.processing_ms,
                 page_error=page_error, finished_at=now(),
             )
+            service.hide_rerun_source(job_id)
         except Exception as exc:
             code = exc.code if isinstance(exc, OcrError) else "OCR_TASK_FAILED"
             message = f"{type(exc).__name__}: {exc}"

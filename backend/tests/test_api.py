@@ -603,3 +603,43 @@ def test_delete_job_persists_and_is_owner_scoped(tmp_path: Path) -> None:
     stored = test_client.app.state.service.jobs.get(job_id)
     assert stored is not None
     assert stored["deleted"] is True
+
+
+def test_rerun_job_reuses_file_and_hides_source_from_default_list(tmp_path: Path) -> None:
+    test_client = client(tmp_path)
+    source_job_id, owner_headers = workflow(test_client)
+    other_headers = register_headers(test_client, "13500135002", "QC-RERUN")
+    source_before = test_client.app.state.service.jobs.get(source_job_id)
+
+    assert test_client.post(
+        f"/api/v1/ocr/jobs/{source_job_id}/rerun",
+        headers=other_headers,
+        json={"model_id": "mock", "model_version": "1.0.0"},
+    ).status_code == 404
+
+    response = test_client.post(
+        f"/api/v1/ocr/jobs/{source_job_id}/rerun",
+        headers=owner_headers,
+        json={"model_id": "mock", "model_version": "1.0.0"},
+    )
+    assert response.status_code == 202
+    rerun_job_id = response.json()["data"]["id"]
+    wait_for_job(test_client, rerun_job_id, owner_headers)
+
+    source_after = test_client.app.state.service.jobs.get(source_job_id)
+    rerun = test_client.app.state.service.jobs.get(rerun_job_id)
+    assert source_after is not None and rerun is not None and source_before is not None
+    assert rerun["file_id"] == source_before["file_id"]
+    assert rerun["options"]["rerun_source_job_id"] == source_job_id
+    assert source_after["options"]["superseded_by_job_id"] == rerun_job_id
+    assert test_client.get(
+        f"/api/v1/ocr/jobs/{source_job_id}", headers=owner_headers,
+    ).status_code == 200
+
+    listed = test_client.get("/api/v1/ocr/jobs", headers=owner_headers).json()["data"]["items"]
+    assert [item["id"] for item in listed] == [rerun_job_id]
+    assert test_client.post(
+        f"/api/v1/ocr/jobs/{source_job_id}/rerun",
+        headers=owner_headers,
+        json={"model_id": "mock", "model_version": "1.0.0"},
+    ).status_code == 409

@@ -24,6 +24,49 @@ from app.models.store import Base
 
 JSON_VALUE = JSON().with_variant(JSONB(), "postgresql")
 
+# A terminal strip groups existing, independently recognized single-side pages.
+terminal_tasks = Table(
+    "terminal_tasks", Base.metadata,
+    Column("id", String(36), primary_key=True),
+    Column("user_id", String(36), ForeignKey("users.id"), nullable=False),
+    Column("tenant_id", String(36), ForeignKey("tenants.id"), nullable=False),
+    Column("name", String(200), nullable=False),
+    Column("revision", Integer, nullable=False, server_default="0"),
+    Column("links", JSON_VALUE, nullable=False, server_default="[]"),
+    Column("created_at", String(40), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+)
+terminal_sides = Table(
+    "terminal_sides", Base.metadata,
+    Column("task_id", String(36), ForeignKey("terminal_tasks.id"), primary_key=True),
+    Column("side", String(5), primary_key=True),
+    Column("job_id", String(36), ForeignKey("ocr_jobs.id"), nullable=False),
+    Column("page_no", Integer, nullable=False),
+    CheckConstraint("side IN ('left','right')", name="ck_terminal_side"),
+    CheckConstraint("page_no > 0", name="ck_terminal_page"),
+)
+terminal_reviews = Table(
+    "terminal_reviews", Base.metadata,
+    Column("task_id", String(36), ForeignKey("terminal_tasks.id"), primary_key=True),
+    Column("row_id", String(64), primary_key=True),
+    Column("fingerprint", String(64), nullable=False),
+    Column("confirmed", Boolean, nullable=False),
+    Column("note", String(4000), nullable=False),
+    Column("updated_by", String(36), ForeignKey("users.id"), nullable=False),
+    Column("updated_at", String(40), nullable=False),
+)
+terminal_events = Table(
+    "terminal_events", Base.metadata,
+    Column("id", String(36), primary_key=True),
+    Column("task_id", String(36), ForeignKey("terminal_tasks.id"), nullable=False),
+    Column("user_id", String(36), ForeignKey("users.id"), nullable=False),
+    Column("action", String(30), nullable=False),
+    Column("snapshot", JSON_VALUE, nullable=False),
+    Column("created_at", String(40), nullable=False),
+)
+Index("ix_terminal_tasks_user_created", terminal_tasks.c.user_id, terminal_tasks.c.created_at)
+Index("ix_terminal_events_task_created", terminal_events.c.task_id, terminal_events.c.created_at)
+
 # Dataset publication is separate from individual OCR result review flags.
 dataset_reviews = Table(
     "dataset_reviews", Base.metadata,

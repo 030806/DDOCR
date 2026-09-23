@@ -111,6 +111,12 @@ HTTP 错误：400 参数错误、401 未登录、403 无权限、404 不存在�
 
 响应包含 `id, status, stage, progress, created_at`。
 
+### 5.1.1 重新识别
+
+`POST /api/v1/ocr/jobs/{job_id}/rerun` 复用已完成任务的原文件创建新的完整 OCR 任务，请求为 `{"model_id":"mock","model_version":"1.0.0"}`，成功返回 `202 Accepted` 及新任务摘要。无需再次上传文件，来源任务的结果、纠正、留言和复核数据保持不变。
+
+新任务成功写入识别结果后，来源任务默认不再出现在 `GET /api/v1/ocr/jobs` 的任务记录中，但仍可通过原任务 ID 查询，用于审计和回退；如果新任务失败，来源任务保持可见并允许再次识别。新任务保存 `rerun_source_job_id`，来源任务保存 `superseded_by_job_id`。来源任务必须已完成，同一来源任务不能并行或重复成功发起重新识别。
+
 ### 区域 OCR 任务
 
 `POST /api/v1/ocr/region-jobs` 创建独立区域 OCR 任务，成功返回 `202 Accepted`。该接口不修改普通任务创建接口，也不会修改来源任务结果。首期仅支持单页 PNG/JPG 图片，每页最多 20 个区域。
@@ -278,6 +284,12 @@ result_count, review_count, created_by{id,name}, error
 新增接口及请求示例见 [11_Dataset_Collection.md](11_Dataset_Collection.md)。已有 OCR、纠正、编辑与导出接口契约保持不变。
 ## 结果表格字段
 
+新执行的 OCR 任务中，若端子编号规则无法确定编号、输出为空，结果 `text` 回退为模型原始识别文字（保留大小写、空格及标点），列表和表格的 `display_text` 因而仍可显示识别内容；人工纠正仍优先展示。无法确定的结果保留待复核标记和规则评估信息。规则产生非空编号时继续使用该编号；模型原始文字也为空时不生成替代内容。此调整不修改已有历史结果，历史空白结果可重新识别。
+
 `GET /ocr/jobs/{job_id}/pages/{page_no}/results` 的每条结果新增 `terminal_number`（字符串）、`manual_confirmed`（布尔）、`table_note`（字符串）和 `table_revision`（整数）。线缆编号继续使用已有 `display_text`，编辑时调用已有纠正接口。
 
 `PATCH /ocr/results/{result_id}/table` 需登录且仅允许任务所有者调用。请求体为 `{"terminal_number":"X1","manual_confirmed":true,"table_note":"已核对","base_revision":0}`，响应包含结果 ID、三个字段和递增的 `table_revision`。修订号过期返回 409；端子号最多 500 字符，备注最多 1000 字符。
+# 端子排任务新增接口
+
+新增 `/api/v1/terminal-tasks` 接口族用于左右侧关联、合并复核和六列导出，不修改原 OCR 接口。
+请求字段、版本控制及下载规则见 [左右侧任务 API](12_Terminal_Side_Tasks.md#新接口)。

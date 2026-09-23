@@ -30,6 +30,7 @@ export type OcrItem = {
   manualConfirmed?: boolean
   tableNote?: string
   tableRevision?: number
+  needsRawTextReview?: boolean
 }
 
 export type OcrReviewStatus = 'unreviewed' | 'confirmed' | 'false_positive' | 'deleted'

@@ -84,9 +84,23 @@ def test_output_text_none_falls_back_to_raw_text() -> None:
     assert adapted.text == "X12"
 
 
-def test_empty_output_is_preserved_and_requires_review() -> None:
+@pytest.mark.parametrize("raw_text", ["K2IC", "电源-24V", " cable / 01 "])
+def test_empty_output_falls_back_to_raw_text_and_requires_review(raw_text: str) -> None:
     adapted = OcrAdapter.adapt_detection(
-        detection(output_text="", is_unresolved=True),
+        detection(output_text="", raw_text=raw_text, is_unresolved=True),
+        image_width=100,
+        image_height=80,
+    )
+
+    assert adapted.text == raw_text
+    assert adapted.review_required
+    assert adapted.attributes["raw_text"] == raw_text
+    assert adapted.attributes["is_unresolved"] is True
+
+
+def test_missing_raw_and_output_text_still_requires_review() -> None:
+    adapted = OcrAdapter.adapt_detection(
+        detection(output_text="", raw_text="", is_unresolved=False),
         image_width=100,
         image_height=80,
     )

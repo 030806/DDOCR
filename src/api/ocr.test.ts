@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apiClient } from './client'
-import { createComment, createCorrection, createRegionOcrTask, deleteComment, deleteTask, exportTaskResults, getModels, getOcrPages, mapApiJob, mapApiResult, saveResultEdits, updateComment, updateResultReviewStatus, updateResultTable, uploadAndCreateOcrTask } from './ocr'
+import { createComment, createCorrection, createRegionOcrTask, deleteComment, deleteTask, exportTaskResults, getModels, getOcrPages, mapApiJob, mapApiResult, rerunOcrTask, saveResultEdits, updateComment, updateResultReviewStatus, updateResultTable, uploadAndCreateOcrTask } from './ocr'
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
@@ -64,6 +64,24 @@ describe('OCR API adapters', () => {
     expect(item.text).toBe('QF10I')
   })
 
+  it('marks unresolved raw-text fallbacks for user review', () => {
+    const unresolved = mapApiResult({
+      id: 'result-unresolved', text: '电源-24V', confidence: 0.82,
+      bbox: [1, 2, 30, 40], display_text: '电源-24V',
+      is_corrected: false, comments: [], revision: 0,
+      attributes: { is_unresolved: true },
+    })
+    const resolved = mapApiResult({
+      id: 'result-resolved', text: 'K111A2', confidence: 0.96,
+      bbox: [1, 2, 30, 40], display_text: 'K111A2',
+      is_corrected: false, comments: [], revision: 0,
+      attributes: { is_unresolved: false },
+    })
+
+    expect(unresolved.needsRawTextReview).toBe(true)
+    expect(resolved.needsRawTextReview).toBe(false)
+  })
+
   it('uploads a file, completes it, and creates a mock OCR job', async () => {
     const post = vi.spyOn(apiClient, 'post')
       .mockResolvedValueOnce({
@@ -116,6 +134,17 @@ describe('OCR API adapters', () => {
       model_version: '1.0.0',
     }))
     expect(stages[stages.length - 1]).toBe(100)
+  })
+
+  it('reruns an OCR task with its server-side source file', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: { data: { id: 'job-2', status: 'queued' }, request_id: 'req-rerun' },
+    } as never)
+
+    await expect(rerunOcrTask('job-1', { value: 'mock', version: '1.0.0' })).resolves.toBe('job-2')
+    expect(post).toHaveBeenCalledWith('/ocr/jobs/job-1/rerun', {
+      model_id: 'mock', model_version: '1.0.0',
+    })
   })
 
   it('loads the available model catalog from the API', async () => {

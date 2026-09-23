@@ -9,6 +9,15 @@ const router = createRouter({
     { path: '/workspace', name: 'workspace', component: () => import('../views/WorkspaceView.vue') },
     { path: '/workspace/:taskId', name: 'workspace-task', component: () => import('../views/WorkspaceView.vue') },
     { path: '/tasks', name: 'tasks', component: () => import('../views/TaskHistoryView.vue') },
+    { path: '/terminal-tasks', name: 'terminal-tasks', component: () => import('../views/TerminalTasksView.vue') },
+    {
+      path: '/terminal-tasks/:terminalId', component: () => import('../views/TerminalTaskView.vue'),
+      children: [
+        { path: '', redirect: to => `${to.path}/left` },
+        { path: 'merged', name: 'terminal-merged', component: { render: () => null } },
+        { path: ':side(left|right)/:taskId?', name: 'terminal-side', component: () => import('../views/WorkspaceView.vue') },
+      ],
+    },
   ],
 })
 

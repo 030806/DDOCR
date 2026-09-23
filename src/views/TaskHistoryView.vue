@@ -168,6 +168,7 @@ function deleteTask(task: OcrTask) {
     <section class="task-page-heading">
       <div><span class="section-kicker">OCR TASK ARCHIVE</span><h1>任务记录</h1><p>查看历史识别任务，继续处理待复核结果。</p></div>
       <button class="back-workspace-btn" @click="router.push('/workspace')">返回工作台</button>
+      <button class="back-workspace-btn" @click="router.push('/terminal-tasks')">左右侧端子排任务</button>
     </section>
 
     <section class="task-list-panel">

@@ -1,5 +1,8 @@
 # DDOCR Backend
 
+左右侧端子排任务新增迁移 `f280_terminal_tasks`，部署时执行 `python -m alembic upgrade head`。
+任务关联、合并复核、六列导出接口及操作说明见 [端子排左右侧任务](../docs/12_Terminal_Side_Tasks.md)。
+
 新增任务级复核及数据集入库功能，正式环境需执行 `python -m alembic upgrade head`（`d903_dataset_review`）。保存目录、接口、故障重试及重建命令见 [数据收集说明](../docs/11_Dataset_Collection.md)。
 
 FastAPI 后端，REST 接口统一位于 `/api/v1`。业务数据存储在 PostgreSQL，上传文件和导出文件仍保存在 `DDOCR_DATA_DIR` 指定的本地目录。

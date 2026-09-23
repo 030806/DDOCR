@@ -26,6 +26,7 @@ from app.schemas.contracts import (
     CorrectionCreate,
     ExportCreate,
     JobCreate,
+    JobRerunCreate,
     RegionJobCreate,
     UploadSessionCreate,
 )
@@ -384,6 +385,50 @@ class MockOcrService:
         self.job_submitter(job_id)
         response_fields = ("id", "status", "stage", "progress", "created_at")
         return {field: job[field] for field in response_fields}
+
+    def rerun_job(
+        self,
+        source_job_id: str,
+        body: JobRerunCreate,
+        owner_id: str,
+    ) -> dict[str, Any]:
+        """Create a replacement job from the source file and hide the source in lists."""
+
+        source = self.job(source_job_id, owner_id)
+        if source["status"] not in {"succeeded", "partial_success"}:
+            raise HTTPException(409, "Only completed OCR jobs can be recognized again")
+        if source.get("options", {}).get("superseded_by_job_id"):
+            raise HTTPException(409, "This OCR job has already been recognized again")
+        active_rerun = next((
+            job for job in self.all_jobs()
+            if job.get("options", {}).get("rerun_source_job_id") == source_job_id
+            and job.get("status") not in {"failed", "cancelled"}
+        ), None)
+        if active_rerun:
+            raise HTTPException(409, "This OCR job is already being recognized again")
+
+        created = self.create_job(JobCreate(
+            name=source["name"],
+            file_id=source["file_id"],
+            model_id=body.model_id,
+            model_version=body.model_version,
+            options={"rerun_source_job_id": source_job_id},
+        ), owner_id)
+        return created
+
+    def hide_rerun_source(self, rerun_job_id: str) -> None:
+        """Hide a successfully superseded source while keeping it directly accessible."""
+
+        rerun = self.jobs.get(rerun_job_id)
+        source_job_id = rerun.get("options", {}).get("rerun_source_job_id") if rerun else None
+        if not source_job_id:
+            return
+        source = self.jobs.get(source_job_id)
+        if not source:
+            return
+        source_options = dict(source.get("options", {}))
+        source_options["superseded_by_job_id"] = rerun_job_id
+        self.jobs.update_options(source_job_id, source_options)
 
     @staticmethod
     def _region_bbox(

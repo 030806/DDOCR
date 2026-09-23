@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { CommentOutlined, DeleteOutlined, EditOutlined, SearchOutlined, UndoOutlined, WarningOutlined } from '@ant-design/icons-vue'
+import { CommentOutlined, DeleteOutlined, EditOutlined, UndoOutlined, WarningOutlined } from '@ant-design/icons-vue'
 import { Modal } from 'ant-design-vue'
 import type { OcrItem, OcrPage, OcrReviewStatus } from '../types/ocr'
 import type { ExportMode } from '../exportResults'
 import { filterOcrItems } from '../resultVisibility'
 import { sortOcrItemsByCoordinates } from '../ocrResultOrder'
+import { terminalNumberFillValues } from '../terminalNumberFill'
 
 const props = defineProps<{
   page: OcrPage
@@ -46,6 +47,7 @@ const drafts = reactive<Record<string, RowDraft>>({})
 const saving = reactive<Record<string, boolean>>({})
 const errors = reactive<Record<string, string>>({})
 const rowSaves = new Map<string, Promise<void>>()
+const terminalNumberFilling = ref(false)
 function draftFor(item: OcrItem): RowDraft {
   return drafts[item.id] ||= {
     terminalNumber: item.terminalNumber || '', cable: item.corrected || item.text,
@@ -104,7 +106,23 @@ function hasPendingEdits() {
         || draft.tableNote !== (item.tableNote || ''))
     })
 }
-defineExpose({ hasPendingEdits })
+function syncCorrection(resultId: string, correctedText: string) {
+  const draft = drafts[resultId]
+  if (draft) draft.cable = correctedText
+  delete errors[`${resultId}:cable`]
+}
+async function flushPendingEdits() {
+  await Promise.all([...rowSaves.values()])
+  for (const item of props.page.items) {
+    if (!drafts[item.id]) continue
+    for (const field of ['terminalNumber', 'cable', 'manualConfirmed', 'tableNote'] as const) {
+      if (!saving[fieldKey(item, field)]) await saveField(item, field)
+    }
+  }
+  await Promise.all([...rowSaves.values()])
+  return !hasPendingEdits()
+}
+defineExpose({ hasPendingEdits, flushPendingEdits, syncCorrection })
 const filteredItems = computed(() => filterOcrItems(props.page.items, {
   search: search.value,
   minimumConfidence: minimumConfidencePercent.value / 100,
@@ -116,15 +134,6 @@ const filteredItems = computed(() => filterOcrItems(props.page.items, {
 const displayedItems = computed(() => coordinateSorted.value
   ? sortOcrItemsByCoordinates(filteredItems.value)
   : filteredItems.value)
-const activeItems = computed(() => props.page.items.filter(item => item.reviewStatus !== 'deleted' && item.reviewStatus !== 'false_positive'))
-const falsePositiveCount = computed(() => props.page.items.filter(item => item.reviewStatus === 'false_positive').length)
-const deletedCount = computed(() => props.page.items.filter(item => item.reviewStatus === 'deleted').length)
-const activeLowConfidenceThreshold = computed(() => minimumConfidencePercent.value > 0 ? minimumConfidencePercent.value / 100 : props.lowConfidenceThreshold)
-const lowConfidenceCount = computed(() => props.page.items.filter(item =>
-  item.reviewStatus !== 'deleted'
-  && item.reviewStatus !== 'false_positive'
-  && item.score < activeLowConfidenceThreshold.value,
-).length)
 const allVisibleSelected = computed(() => filteredItems.value.length > 0 && filteredItems.value.every(item => selectedIds.value.includes(item.id)))
 function scoreColor(score: number) {
   if (score < 0.90) return '#ef5350'
@@ -162,6 +171,22 @@ function reviewSelected(status: OcrReviewStatus) {
   } else apply()
 }
 
+async function fillSelectedTerminalNumbers() {
+  if (terminalNumberFilling.value) return
+  const values = terminalNumberFillValues(displayedItems.value, selectedIds.value)
+  if (!values.size) return
+  terminalNumberFilling.value = true
+  try {
+    await Promise.all(displayedItems.value.flatMap(item => {
+      const value = values.get(item.id)
+      const draft = draftFor(item)
+      if (!value || draft.terminalNumber.trim()) return []
+      draft.terminalNumber = value
+      return [saveField(item, 'terminalNumber')]
+    }))
+  } finally { terminalNumberFilling.value = false }
+}
+
 watch(displayedItems, items => emit('visible-change', items.map(item => item.id)), { immediate: true })
 watch(() => props.page.no, () => { selectedIds.value = []; coordinateSorted.value = false; Object.keys(drafts).forEach(key => delete drafts[key]) })
 </script>
@@ -169,7 +194,12 @@ watch(() => props.page.no, () => { selectedIds.value = []; coordinateSorted.valu
 <template>
   <aside class="results-panel">
     <div class="results-head">
-      <div class="results-heading"><h2>识别结果</h2><span>{{ page.items.length }} 个文本区域</span></div>
+<!--      <div class="results-heading"><h2>识别结果</h2><span>{{ page.items.length }} 个文本区域</span></div>-->
+      <div class="result-mode-row" role="group" aria-label="识别结果显示方式">
+      <button :class="{ active: viewMode === 'list' }" :aria-pressed="viewMode === 'list'" @click="viewMode = 'list'">列表显示</button>
+      <button :class="{ active: viewMode === 'table' }" :aria-pressed="viewMode === 'table'" @click="viewMode = 'table'">表格显示</button>
+      <span v-if="viewMode === 'table'">修改后离开单元格自动保存</span>
+    </div>
       <button class="copy-btn" :disabled="page.items.length < 2" @click="coordinateSorted = true">{{ coordinateSorted ? '已按坐标排序' : '按坐标排序' }}</button>
       <a-dropdown :trigger="['click']">
         <button class="copy-btn">导出结果</button>
@@ -181,35 +211,32 @@ watch(() => props.page.no, () => { selectedIds.value = []; coordinateSorted.valu
         </template>
       </a-dropdown>
     </div>
-    <div class="result-mode-row" role="group" aria-label="识别结果显示方式">
-      <button :class="{ active: viewMode === 'list' }" :aria-pressed="viewMode === 'list'" @click="viewMode = 'list'">列表显示</button>
-      <button :class="{ active: viewMode === 'table' }" :aria-pressed="viewMode === 'table'" @click="viewMode = 'table'">表格显示</button>
-      <span v-if="viewMode === 'table'">修改后离开单元格自动保存</span>
-    </div>
+
     <!-- <div class="metrics">
       <div><span>全文字符</span><b>{{ stats.count * 8 + 76 }}</b></div>
       <div><span>平均置信度</span><b>{{ (stats.average * 100).toFixed(1) }}%</b></div>
       <div><span>待复核</span><b class="warning">{{ stats.low }}</b></div>
     </div> -->
-    <div class="filter-row">
-      <a-input v-model:value="search" placeholder="搜索识别内容" allow-clear><template #prefix><SearchOutlined /></template></a-input>
-      <button class="filter-btn" :class="{ active: lowOnly }" @click="lowOnly = !lowOnly">低置信度 &lt;{{ Math.round(activeLowConfidenceThreshold * 100) }}% <span>{{ lowConfidenceCount }}</span></button>
-    </div>
-    <div class="confidence-filter">
-      <span>最低置信度</span>
-      <a-slider v-model:value="minimumConfidencePercent" :min="0" :max="100" :step="1" />
-      <b>{{ minimumConfidencePercent }}%</b>
-      <button v-for="value in [0, 50, 70, 90]" :key="value" :class="{ active: minimumConfidencePercent === value }" @click="minimumConfidencePercent = value">{{ value ? `${value}%` : '全部' }}</button>
-    </div>
-    <div class="review-filter-row">
-      <a-checkbox :checked="showFalsePositive" @update:checked="showFalsePositive = $event">显示误检（{{ falsePositiveCount }}）</a-checkbox>
-      <a-checkbox :checked="showDeleted" @update:checked="showDeleted = $event">显示已删除（{{ deletedCount }}）</a-checkbox>
-      <span>可见 {{ filteredItems.length }} / 有效 {{ activeItems.length }} / 总计 {{ page.items.length }}</span>
-    </div>
+<!--    <div class="filter-row">-->
+<!--      <a-input v-model:value="search" placeholder="搜索识别内容" allow-clear><template #prefix><SearchOutlined /></template></a-input>-->
+<!--&lt;!&ndash;      <button class="filter-btn" :class="{ active: lowOnly }" @click="lowOnly = !lowOnly">低置信度 &lt;{{ Math.round(activeLowConfidenceThreshold * 100) }}% <span>{{ lowConfidenceCount }}</span></button>&ndash;&gt;-->
+<!--    </div>-->
+<!--    <div class="confidence-filter">-->
+<!--      <span>最低置信度</span>-->
+<!--      <a-slider v-model:value="minimumConfidencePercent" :min="0" :max="100" :step="1" />-->
+<!--      <b>{{ minimumConfidencePercent }}%</b>-->
+<!--      <button v-for="value in [0, 50, 70, 90]" :key="value" :class="{ active: minimumConfidencePercent === value }" @click="minimumConfidencePercent = value">{{ value ? `${value}%` : '全部' }}</button>-->
+<!--    </div>-->
+<!--    <div class="review-filter-row">-->
+<!--      <a-checkbox :checked="showFalsePositive" @update:checked="showFalsePositive = $event">显示误检（{{ falsePositiveCount }}）</a-checkbox>-->
+<!--      <a-checkbox :checked="showDeleted" @update:checked="showDeleted = $event">显示已删除（{{ deletedCount }}）</a-checkbox>-->
+<!--      <span>可见 {{ filteredItems.length }} / 有效 {{ activeItems.length }} / 总计 {{ page.items.length }}</span>-->
+<!--    </div>-->
     <div class="batch-review-bar">
       <a-checkbox :checked="allVisibleSelected" @update:checked="toggleAllVisible($event)">全选当前</a-checkbox>
       <span>已选 {{ selectedIds.length }} 项</span>
-      <button :disabled="!selectedIds.length" @click="reviewSelected('false_positive')"><WarningOutlined /> 标记误检</button>
+      <button v-if="viewMode === 'list'" :disabled="!selectedIds.length" @click="reviewSelected('false_positive')"><WarningOutlined /> 标记误检</button>
+      <button v-else :disabled="!selectedIds.length || terminalNumberFilling" @click="fillSelectedTerminalNumbers"><EditOutlined /> {{ terminalNumberFilling ? '填充中' : '一键填充端子号' }}</button>
       <button class="danger" :disabled="!selectedIds.length" @click="reviewSelected('deleted')"><DeleteOutlined /> 删除</button>
       <button :disabled="!selectedIds.length" @click="reviewSelected('unreviewed')"><UndoOutlined /> 恢复</button>
     </div>
@@ -218,7 +245,10 @@ watch(() => props.page.no, () => { selectedIds.value = []; coordinateSorted.valu
         <a-checkbox class="result-select" :checked="selectedIds.includes(item.id)" @click.stop @update:checked="toggleSelected(item.id, $event)" />
         <div class="result-index">{{ String(displayIndex + 1).padStart(2, '0') }}</div>
         <div class="result-main">
-          <p>{{ item.corrected || item.text }}</p>
+          <p>
+            {{ item.corrected || item.text }}
+            <span v-if="item.needsRawTextReview && !item.corrected" class="raw-text-review-tag">待核对原始标记</span>
+          </p>
           <div class="result-meta">
             <span v-if="item.editSource === 'manual'" class="manual-result-tag">人工新增</span>
             <span v-else-if="showConfidence" :class="item.score < lowConfidenceThreshold ? 'low-score' : ''"><i :style="{ background: scoreColor(item.score) }"></i>{{ (item.score * 100).toFixed(1) }}%</span>
@@ -244,7 +274,7 @@ watch(() => props.page.no, () => { selectedIds.value = []; coordinateSorted.valu
           <tr v-for="(item, index) in displayedItems" :key="item.id" :class="{ selected: selectedId === item.id }" :data-result-id="item.id" @click="emit('select', item.id)">
             <td class="table-index"><a-checkbox :checked="selectedIds.includes(item.id)" :aria-label="`选择第 ${index + 1} 条结果`" @click.stop @update:checked="toggleSelected(item.id, $event)" /> {{ String(index + 1).padStart(2, '0') }}</td>
             <td><input v-model="draftFor(item).terminalNumber" maxlength="500" placeholder="填写端子号" :aria-label="`第 ${index + 1} 行端子号`" :class="{ 'save-error': errors[fieldKey(item, 'terminalNumber')] }" @click.stop @blur="saveField(item, 'terminalNumber')" @keydown.enter.prevent="($event.target as HTMLInputElement).blur()" /><button v-if="errors[fieldKey(item, 'terminalNumber')]" class="retry-save" :title="errors[fieldKey(item, 'terminalNumber')]" @click.stop="saveField(item, 'terminalNumber')">重试</button></td>
-            <td><input v-model="draftFor(item).cable" maxlength="500" :aria-label="`第 ${index + 1} 行线缆编号`" :class="{ 'save-error': errors[fieldKey(item, 'cable')] }" @click.stop @blur="saveField(item, 'cable')" @keydown.enter.prevent="($event.target as HTMLInputElement).blur()" /><button v-if="errors[fieldKey(item, 'cable')]" class="retry-save" :title="errors[fieldKey(item, 'cable')]" @click.stop="saveField(item, 'cable')">重试</button></td>
+            <td><div class="table-cable-cell"><input v-model="draftFor(item).cable" maxlength="500" :aria-label="`第 ${index + 1} 行线缆编号`" :class="{ 'save-error': errors[fieldKey(item, 'cable')] }" @click.stop @blur="saveField(item, 'cable')" @keydown.enter.prevent="($event.target as HTMLInputElement).blur()" /><span v-if="item.needsRawTextReview && !item.corrected" class="raw-text-review-tag">待核对原始标记</span><button v-if="errors[fieldKey(item, 'cable')]" class="retry-save" :title="errors[fieldKey(item, 'cable')]" @click.stop="saveField(item, 'cable')">重试</button></div></td>
             <td class="confirm-cell"><a-checkbox v-model:checked="draftFor(item).manualConfirmed" :aria-label="`第 ${index + 1} 行人工确认`" @click.stop @change="saveField(item, 'manualConfirmed')" /> <span v-if="saving[fieldKey(item, 'manualConfirmed')]">保存中</span><button v-if="errors[fieldKey(item, 'manualConfirmed')]" class="retry-save" @click.stop="saveField(item, 'manualConfirmed')">重试</button></td>
             <td><input v-model="draftFor(item).tableNote" maxlength="1000" placeholder="填写备注" :aria-label="`第 ${index + 1} 行备注`" :class="{ 'save-error': errors[fieldKey(item, 'tableNote')] }" @click.stop @blur="saveField(item, 'tableNote')" @keydown.enter.prevent="($event.target as HTMLInputElement).blur()" /><button v-if="errors[fieldKey(item, 'tableNote')]" class="retry-save" :title="errors[fieldKey(item, 'tableNote')]" @click.stop="saveField(item, 'tableNote')">重试</button></td>
           </tr>

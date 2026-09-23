@@ -7,7 +7,7 @@ import { Pane, Splitpanes } from 'splitpanes'
 import 'splitpanes/dist/splitpanes.css'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter, type NavigationGuardNext } from 'vue-router'
 import type { ModelOption, OcrItem, OcrPage, OcrPolygon, OcrReviewStatus } from '../types/ocr'
-import { createComment, createCorrection, createRegionOcrTask, deleteComment, getModels, getOcrPages, releasePageImages, saveResultEdits, updateComment, updateResultReviewStatus, updateResultTable, uploadAndCreateOcrTask, uploadOcrFile, type RegionDraft } from '../api/ocr'
+import { createComment, createCorrection, createRegionOcrTask, deleteComment, getModels, getOcrPages, releasePageImages, rerunOcrTask, saveResultEdits, updateComment, updateResultReviewStatus, updateResultTable, uploadAndCreateOcrTask, uploadOcrFile, type RegionDraft } from '../api/ocr'
 import { createSplitLayout } from '../splitLayout'
 import { completeDatasetReview, getDatasetStatuses, type DatasetStatus } from '../api/dataset'
 import { exportOcrResults, type ExportMode } from '../exportResults'
@@ -25,11 +25,16 @@ import { useAuth } from '../composables/useAuth'
 import { useOcrJobPolling } from '../composables/useOcrJobPolling'
 import { createEmptyWorkspaceContent } from '../workspaceState'
 import { bboxToPolygon, cloneEditableItems, polygonToBbox, type EditableOcrItem } from '../bboxEditing'
+import { terminalSidePath, terminalViewPositions } from '../terminalState'
+import { applyCorrectionToItems } from '../correctionState'
+
+const emit = defineEmits<{ completed: [jobId: string, pageCount: number] }>()
 
 type JobState = 'ready' | 'running' | 'done'
 
 const route = useRoute()
 const router = useRouter()
+const terminalPositionKey = route.params.terminalId ? `${route.params.terminalId}:${route.params.side}:${route.params.taskId || ''}` : ''
 const { settings } = useAppSettings()
 const { user } = useAuth()
 const initialContent = createEmptyWorkspaceContent()
@@ -42,6 +47,7 @@ const jobState = ref<JobState>('ready')
 const progress = ref(0)
 const taskLoading = ref(false)
 const correctionOpen = ref(false)
+const correctionTargetId = ref('')
 const commentOpen = ref(false)
 const reviewSaving = ref(false)
 const datasetStatus = ref<DatasetStatus>()
@@ -50,7 +56,11 @@ const resultMutationSaving = ref(false)
 const bboxSaving = ref(false)
 const workspaceWidth = ref(typeof window === 'undefined' ? 1440 : window.innerWidth)
 const workspace = ref<{ $el: HTMLElement }>()
-const resultPanel = ref<{ hasPendingEdits: () => boolean }>()
+const resultPanel = ref<{
+  hasPendingEdits: () => boolean
+  flushPendingEdits: () => Promise<boolean>
+  syncCorrection: (resultId: string, correctedText: string) => void
+}>()
 const pages = ref<OcrPage[]>(initialContent.pages)
 const selectedFile = ref<File>()
 const pendingFile = ref<File>()
@@ -88,10 +98,12 @@ const displayPage = computed(() => {
   return { ...activePage, items: activePage.items.filter(item => visible.has(item.id)) }
 })
 const selectedItem = computed(() => pages.value.flatMap((ocrPage) => ocrPage.items).find((item) => item.id === selectedId.value))
+const correctionTarget = computed(() => pages.value.flatMap((ocrPage) => ocrPage.items).find((item) => item.id === correctionTargetId.value))
 const currentModel = computed(() => availableModels.value.find((model) => model.value === selectedModel.value))
 const splitLayout = computed(() => createSplitLayout(workspaceWidth.value))
-const selectedFileName = computed(() => selectedFile.value?.name || '请选择文件')
+const selectedFileName = computed(() => selectedFile.value?.name || polledTask.value?.fileName || '请选择文件')
 const selectedFileMeta = computed(() => {
+  if (!selectedFile.value && polledTask.value) return '当前任务原文件 · 可直接重新识别'
   if (!selectedFile.value) return '支持 PDF、PNG、JPG，最大 200 MB'
   const size = selectedFile.value.size < 1024 * 1024
     ? `${Math.max(1, Math.round(selectedFile.value.size / 1024))} KB`
@@ -124,6 +136,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  if (terminalPositionKey) terminalViewPositions.set(terminalPositionKey, { page: currentPage.value, selectedId: selectedId.value, zoom: zoom.value })
   window.removeEventListener('keydown', handleBboxKeyboard)
   window.removeEventListener('beforeunload', handleBeforeUnload)
   stopPolling()
@@ -137,15 +150,19 @@ function handleBeforeUnload(event: BeforeUnloadEvent) {
   event.returnValue = ''
 }
 
-function confirmBboxNavigation(next: NavigationGuardNext) {
+async function confirmBboxNavigation(next: NavigationGuardNext) {
   if (datasetReviewSaving.value || bboxSaving.value) {
     message.info('正在保存，请完成后再切换任务')
     next(false)
     return
   }
   if (resultPanel.value?.hasPendingEdits()) {
-    Modal.confirm({ title: '表格中有未保存的修改', content: '请重试保存失败的单元格，或确认放弃这些修改。', okText: '放弃并离开', cancelText: '继续编辑', onOk: () => next(), onCancel: () => next(false) })
-    return
+    if (route.params.terminalId) {
+      if (!await resultPanel.value.flushPendingEdits()) { message.warning('保存失败，请修正或重试后切换'); next(false); return }
+    } else {
+      Modal.confirm({ title: '表格中有未保存的修改', content: '请重试保存失败的单元格，或确认放弃这些修改。', okText: '放弃并离开', cancelText: '继续编辑', onOk: () => next(), onCancel: () => next(false) })
+      return
+    }
   }
   if (!bboxEditMode.value || (!bboxDirty.value && !pendingGeometrySnapshot.value)) { next(); return }
   Modal.confirm({
@@ -166,6 +183,18 @@ function confirmBboxNavigation(next: NavigationGuardNext) {
 onBeforeRouteUpdate((_to, _from, next) => confirmBboxNavigation(next))
 onBeforeRouteLeave((_to, _from, next) => confirmBboxNavigation(next))
 
+async function prepareSideChange() {
+  if (datasetReviewSaving.value || bboxSaving.value || reviewSaving.value || resultMutationSaving.value || correctionOpen.value || manualTextOpen.value) {
+    message.info('请先完成当前编辑或保存'); return false
+  }
+  if (resultPanel.value && !await resultPanel.value.flushPendingEdits()) {
+    message.warning('请先修正或重试保存失败的单元格'); return false
+  }
+  if (bboxDirty.value || pendingGeometrySnapshot.value) { message.warning('请先保存检测框修改'); return false }
+  return true
+}
+defineExpose({ prepareSideChange })
+
 function ensureTaskModel(task: NonNullable<typeof polledTask.value>): void {
   if (!availableModels.value.some((model) => model.value === task.modelId)) {
     availableModels.value.push({ value: task.modelId, version: task.modelVersion || '', label: task.modelName, note: '', speed: '' })
@@ -182,12 +211,15 @@ async function loadCompletedTask(task: NonNullable<typeof polledTask.value>, seq
     pages.value = taskPages
     void refreshDatasetStatus(task.id)
     ensureTaskModel(task)
-    currentPage.value = 1
-    const candidates = taskPages[0]?.items || []
+    const position = terminalViewPositions.get(terminalPositionKey)
+    currentPage.value = Math.min(taskPages.length, Math.max(1, Number(route.query.page) || position?.page || 1))
+    if (position) zoom.value = position.zoom
+    const candidates = taskPages[currentPage.value - 1]?.items || []
     const reviewItem = route.query.action === 'review' ? candidates.find((item) => item.score < 0.95) : undefined
-    selectedId.value = (reviewItem || candidates[0])?.id || ''
+    selectedId.value = candidates.find(item => item.id === (route.query.result || position?.selectedId))?.id || (reviewItem || candidates[0])?.id || ''
     jobState.value = 'done'
     progress.value = 100
+    emit('completed', task.id, taskPages.length)
     message.success(task.jobStatus === 'partial_success' ? `任务部分完成：${task.name}` : `识别完成：${task.name}`)
     if (route.query.action === 'region' && autoRegionTaskId !== task.id) {
       autoRegionTaskId = task.id
@@ -227,7 +259,7 @@ function pollTask(taskId: string, sequence: number): void {
 
 function retryTask(): void {
   const taskId = route.params.taskId
-  if (typeof taskId !== 'string') return
+  if (typeof taskId !== 'string' || !taskId) return
   taskLoading.value = true
   pollTask(taskId, taskLoadSequence)
 }
@@ -239,7 +271,7 @@ watch(() => route.params.taskId, (taskId) => {
   releasePageImages(pages.value)
   pages.value = []
   selectedId.value = ''
-  if (typeof taskId !== 'string') {
+  if (typeof taskId !== 'string' || !taskId) {
     selectedFile.value = undefined
     jobState.value = 'ready'
     progress.value = 0
@@ -515,8 +547,33 @@ async function finishDatasetReview() {
   }
 }
 
+async function navigateCreatedTask(taskId: string) {
+  if (typeof route.params.terminalId === 'string') {
+    await router.push({ path: terminalSidePath(route.params.terminalId, route.params.side === 'right' ? 'right' : 'left', taskId), query: { attach: '1' } })
+  } else await router.push(`/workspace/${taskId}`)
+}
+
 async function runOcr() {
   if (jobState.value === 'running') return
+  const sourceTaskId = route.params.taskId
+  if (!selectedFile.value && jobState.value === 'done' && typeof sourceTaskId === 'string') {
+    if (!currentModel.value) {
+      message.warning('请先选择可用的识别模型')
+      return
+    }
+    jobState.value = 'running'
+    progress.value = 5
+    try {
+      const taskId = await rerunOcrTask(sourceTaskId, currentModel.value)
+      message.success(`已使用原文件重新识别 · ${currentModel.value.label}`)
+      await navigateCreatedTask(taskId)
+    } catch (error) {
+      jobState.value = 'done'
+      progress.value = 100
+      message.error(isAxiosError(error) ? error.response?.data?.error?.message || '重新识别失败，请稍后重试' : '重新识别失败，请稍后重试')
+    }
+    return
+  }
   if (!selectedFile.value) {
     message.warning('请先选择要识别的 PDF 或图片文件')
     return
@@ -534,7 +591,7 @@ async function runOcr() {
     progress.value = 0
     jobState.value = 'running'
     message.success(`任务已提交 · ${currentModel.value.label}`)
-    await router.push(`/workspace/${taskId}`)
+    await navigateCreatedTask(taskId)
   } catch {
     jobState.value = 'ready'
     progress.value = 0
@@ -581,7 +638,7 @@ async function submitRegionJob(name: string, regions: RegionDraft[]) {
     progress.value = 0
     jobState.value = 'running'
     message.success('独立区域 OCR 任务已创建，来源任务未被修改')
-    await router.push(`/workspace/${taskId}`)
+    await navigateCreatedTask(taskId)
   } catch {
     jobState.value = regionJobMode.value === 'upload' ? 'ready' : 'done'
     progress.value = 0
@@ -591,7 +648,21 @@ async function submitRegionJob(name: string, regions: RegionDraft[]) {
   }
 }
 
-function openCorrection(item: OcrItem) { selectItem(item.id); correctionOpen.value = true }
+function openCorrection(item: OcrItem) {
+  if (item.id.startsWith('draft-')) {
+    message.warning('请先保存新增检测框，再纠正识别文字')
+    return
+  }
+  selectItem(item.id)
+  correctionTargetId.value = item.id
+  correctionOpen.value = true
+}
+
+function applySavedCorrection(resultId: string, correctedText: string, revision: number) {
+  for (const ocrPage of pages.value) applyCorrectionToItems(ocrPage.items, resultId, correctedText, revision)
+  applyCorrectionToItems(bboxDraftItems.value, resultId, correctedText, revision)
+  resultPanel.value?.syncCorrection(resultId, correctedText)
+}
 async function saveTableCell(item: OcrItem, values: { terminalNumber: string; manualConfirmed: boolean; tableNote: string }) {
   let saved
   try { saved = await updateResultTable(item, values) }
@@ -615,30 +686,29 @@ async function saveCableCell(item: OcrItem, text: string) {
   catch (error) {
     const details = isAxiosError(error) ? error.response?.data?.error?.details : undefined
     if (isAxiosError(error) && error.response?.status === 409 && details) {
-      item.revision = details.current_revision
+      applySavedCorrection(item.id, details.current_display_text, details.current_revision)
       message.warning('识别文字已被其他用户修改，请核对输入后重试')
     }
     throw error
   }
-  item.corrected = saved.corrected_text
-  item.revision = saved.revision
+  applySavedCorrection(item.id, saved.corrected_text, saved.revision)
   invalidateDatasetReview()
 }
 async function saveCorrection(text: string) {
-  if (!selectedItem.value) return
+  const target = correctionTarget.value
+  if (!target) return
   reviewSaving.value = true
   try {
-    const correction = await createCorrection(selectedItem.value.id, text, selectedItem.value.revision || 0)
+    const correction = await createCorrection(target.id, text, target.revision || 0)
     invalidateDatasetReview()
-    selectedItem.value.corrected = correction.corrected_text
-    selectedItem.value.revision = correction.revision
+    applySavedCorrection(target.id, correction.corrected_text, correction.revision)
     correctionOpen.value = false
+    correctionTargetId.value = ''
     message.success('纠正已保存，原始识别内容已保留')
   } catch (error) {
     const details = isAxiosError(error) ? error.response?.data?.error?.details : undefined
     if (error && isAxiosError(error) && error.response?.status === 409 && details) {
-      selectedItem.value.revision = details.current_revision
-      selectedItem.value.corrected = details.current_display_text
+      applySavedCorrection(target.id, details.current_display_text, details.current_revision)
       message.warning('结果已被其他用户修改，已加载服务器最新内容，请重新确认')
     } else message.error('纠正保存失败')
   } finally { reviewSaving.value = false }
@@ -734,7 +804,7 @@ async function handleExport(mode: ExportMode) {
       <p>请选择历史任务，或上传文件创建 OCR 任务。</p>
       <button @click="router.push('/tasks')">查看历史任务</button>
     </div>
-    <CorrectionModal v-model:open="correctionOpen" :item="selectedItem" :saving="reviewSaving" @save="saveCorrection" />
+    <CorrectionModal v-model:open="correctionOpen" :item="correctionTarget" :saving="reviewSaving" @save="saveCorrection" />
     <CommentDrawer v-model:open="commentOpen" :item="selectedItem" :current-user-id="user?.id" :saving="reviewSaving" @save="saveComment" @update-comment="editComment" @delete-comment="removeComment" />
     <UploadPreviewModal :open="uploadPreviewOpen" :file="pendingFile" @close="uploadPreviewOpen = false" @delete="deleteUpload" @save="saveUpload" />
     <RegionJobModal
