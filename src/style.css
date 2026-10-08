@@ -56,6 +56,8 @@ button { font: inherit; }
 .upload-file-actions { flex: 0 0 auto !important; display: flex; align-items: center; gap: 4px; }
 .preview-file-btn,.replace-btn { padding: 4px 6px; border: 0; background: transparent; color: #168b6c; font-size: 12px; cursor: pointer; white-space: nowrap; }.preview-file-btn .anticon { margin-right: 3px; }
 .upload-preview-stage { height: min(62vh, 620px); overflow-x: auto; overflow-y: scroll; border: 1px solid #dce4e1; border-radius: 8px; background: #e8eeeb; scrollbar-gutter: stable; }
+.upload-preview-selection-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; color: #66736e; font-size: 12px; }
+.upload-preview-selection-bar > span { flex: 1; }
 .upload-preview-image-wrap { min-height: 100%; display: flex; align-items: flex-start; justify-content: center; padding: 24px; }
 .upload-preview-stage img { display: block; width: auto; max-width: 100%; height: auto; flex: 0 0 auto; object-fit: contain; transition: transform .2s ease; box-shadow: 0 8px 24px rgba(20,45,37,.18); }
 .upload-preview-stage::-webkit-scrollbar { width: 10px; height: 10px; }.upload-preview-stage::-webkit-scrollbar-thumb { border: 2px solid #e8eeeb; border-radius: 8px; background: #9eada7; }
@@ -148,12 +150,11 @@ button { font: inherit; }
 .task-list-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #d8e0dd; border-radius: 9px; background: #fff; box-shadow: 0 7px 22px rgba(25,49,41,.06); }.task-toolbar { height: 64px; flex: 0 0 64px; display: flex; align-items: center; gap: 10px; padding: 0 16px; border-bottom: 1px solid #e2e8e5; }.task-search { width: 290px; }.task-filter { width: 155px; }.task-count { margin-left: auto; color: #87938f; font-size: 10px; }.task-table-wrap { flex: 1; min-height: 0; overflow: hidden; padding: 0 10px; }
 .task-name-cell { display: flex; align-items: center; gap: 10px; }.task-file-icon { width: 34px; height: 38px; flex: 0 0 34px; display: grid; place-items: center; border-radius: 5px; background: #e7f3ef; color: #168b6c; font-size: 16px; }.task-name-cell b,.task-name-cell small { display: block; }.task-name-cell b { overflow: hidden; color: #26332f; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }.task-name-cell small { margin-top: 4px; color: #8b9692; font-size: 9px; }.review-warning { color: #d77b27; }
 .task-actions { display: flex; align-items: center; gap: 4px; }.task-actions button { height: 27px; padding: 0 7px; border: 1px solid #d5dfdb; border-radius: 5px; background: #fff; color: #52615c; font-size: 9px; cursor: pointer; }.task-actions button:hover { border-color: #79b6a3; color: #16775e; }.task-actions button:disabled { opacity: .4; cursor: not-allowed; }.task-actions button.danger { padding: 0 8px; color: #c95a55; }.task-actions button.danger:hover { border-color: #e1a19e; background: #fff5f4; }
-.region-run-btn { height: 42px; padding: 0 15px; border: 1px solid #69a995; border-radius: 7px; background: #f0f8f5; color: #14745b; font-size: 11px; font-weight: 600; cursor: pointer; white-space: nowrap; }
-.region-run-btn:disabled { opacity: .42; cursor: not-allowed; }
 .region-job-intro { margin-bottom: 12px; padding: 10px 12px; border-left: 3px solid #1677ff; border-radius: 4px; background: #f0f7ff; color: #486679; font-size: 12px; }
 .region-job-name { margin-bottom: 12px; }
 .region-selector-scroll { height: min(62vh, 660px); overflow: auto; display: flex; align-items: flex-start; justify-content: center; padding: 18px; border: 1px solid #d6dfdc; border-radius: 7px; background-color: #dfe5e3; background-image: radial-gradient(#bdc8c4 .7px, transparent .7px); background-size: 14px 14px; }
 .region-selector { position: relative; flex: 0 0 auto; max-width: 100%; line-height: 0; cursor: crosshair; user-select: none; touch-action: none; box-shadow: 0 8px 28px rgba(20,45,37,.2); }
+.region-selector.selection-disabled { cursor: default; touch-action: auto; }
 .region-selector img { display: block; max-width: 860px; max-height: 610px; width: auto; height: auto; pointer-events: none; -webkit-user-drag: none; }
 .region-box { position: absolute; z-index: 2; border: 2px solid #1677ff; background: rgba(22,119,255,.11); line-height: normal; pointer-events: none; }
 .region-box span { position: absolute; top: -23px; left: -2px; height: 21px; padding: 2px 6px; border-radius: 4px 4px 0 0; background: #1677ff; color: #fff; font-size: 10px; white-space: nowrap; }

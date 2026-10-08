@@ -7,7 +7,7 @@ import { Pane, Splitpanes } from 'splitpanes'
 import 'splitpanes/dist/splitpanes.css'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter, type NavigationGuardNext } from 'vue-router'
 import type { ModelOption, OcrItem, OcrPage, OcrPolygon, OcrReviewStatus } from '../types/ocr'
-import { createComment, createCorrection, createRegionOcrTask, deleteComment, getModels, getOcrPages, releasePageImages, rerunOcrTask, saveResultEdits, updateComment, updateResultReviewStatus, updateResultTable, uploadAndCreateOcrTask, uploadOcrFile, type RegionDraft } from '../api/ocr'
+import { createComment, createCorrection, createRegionOcrTask, deleteComment, getModels, getOcrPages, releasePageImages, rerunOcrTask, saveResultEdits, updateComment, updateResultReviewStatus, updateResultTable, uploadAndCreateOcrTaskFromSelection, type RegionDraft } from '../api/ocr'
 import { createSplitLayout } from '../splitLayout'
 import { completeDatasetReview, getDatasetStatuses, type DatasetStatus } from '../api/dataset'
 import { exportOcrResults, type ExportMode } from '../exportResults'
@@ -26,6 +26,7 @@ import { useOcrJobPolling } from '../composables/useOcrJobPolling'
 import { createEmptyWorkspaceContent } from '../workspaceState'
 import { bboxToPolygon, cloneEditableItems, polygonToBbox, type EditableOcrItem } from '../bboxEditing'
 import { terminalSidePath, terminalViewPositions } from '../terminalState'
+import { copyRegions } from '../regionSelection'
 import { applyCorrectionToItems } from '../correctionState'
 
 const emit = defineEmits<{ completed: [jobId: string, pageCount: number] }>()
@@ -63,6 +64,7 @@ const resultPanel = ref<{
 }>()
 const pages = ref<OcrPage[]>(initialContent.pages)
 const selectedFile = ref<File>()
+const selectedRegions = ref<RegionDraft[]>([])
 const pendingFile = ref<File>()
 const uploadPreviewOpen = ref(false)
 const visibleResultIds = ref<string[]>()
@@ -79,7 +81,6 @@ const manualBbox = ref<OcrItem['bbox']>()
 const manualText = ref('')
 const manualTextOpen = ref(false)
 const regionJobOpen = ref(false)
-const regionJobMode = ref<'upload' | 'source'>('upload')
 const regionJobSubmitting = ref(false)
 let autoRegionTaskId = ''
 let workspaceObserver: ResizeObserver | undefined
@@ -109,7 +110,7 @@ const selectedFileMeta = computed(() => {
     ? `${Math.max(1, Math.round(selectedFile.value.size / 1024))} KB`
     : `${(selectedFile.value.size / 1024 / 1024).toFixed(1)} MB`
   const type = selectedFile.value.name.split('.').pop()?.toUpperCase() || 'FILE'
-  return `${size} · ${type}`
+  return `${size} · ${type}${selectedRegions.value.length ? ` · 已选 ${selectedRegions.value.length} 个识别区域` : ''}`
 })
 
 function observeWorkspace() {
@@ -223,7 +224,6 @@ async function loadCompletedTask(task: NonNullable<typeof polledTask.value>, seq
     message.success(task.jobStatus === 'partial_success' ? `任务部分完成：${task.name}` : `识别完成：${task.name}`)
     if (route.query.action === 'region' && autoRegionTaskId !== task.id) {
       autoRegionTaskId = task.id
-      regionJobMode.value = 'source'
       regionJobOpen.value = true
     }
   } catch {
@@ -273,11 +273,14 @@ watch(() => route.params.taskId, (taskId) => {
   selectedId.value = ''
   if (typeof taskId !== 'string' || !taskId) {
     selectedFile.value = undefined
+    selectedRegions.value = []
     jobState.value = 'ready'
     progress.value = 0
     taskLoading.value = false
     return
   }
+  selectedFile.value = undefined
+  selectedRegions.value = []
   taskLoading.value = true
   jobState.value = 'running'
   progress.value = 0
@@ -582,37 +585,27 @@ async function runOcr() {
     message.warning('请先选择可用的识别模型')
     return
   }
+  const file = selectedFile.value
+  const regions = copyRegions(selectedRegions.value)
+  const model = currentModel.value
   jobState.value = 'running'
   progress.value = 5
   try {
-    const taskId = await uploadAndCreateOcrTask(selectedFile.value, currentModel.value, (_stage, value) => {
-      progress.value = value
-    })
+    const taskId = await uploadAndCreateOcrTaskFromSelection(file, model, regions, (_stage, value) => { progress.value = value })
     progress.value = 0
     jobState.value = 'running'
-    message.success(`任务已提交 · ${currentModel.value.label}`)
+    message.success(`${regions.length ? '区域识别' : '整图识别'}任务已提交 · ${model.label}`)
     await navigateCreatedTask(taskId)
-  } catch {
+  } catch (error) {
     jobState.value = 'ready'
     progress.value = 0
-    message.error('上传或创建 OCR 任务失败，请确认 FastAPI 服务已启动')
+    message.error(isAxiosError(error) ? error.response?.data?.error?.message || '上传或创建 OCR 任务失败' : '上传或创建 OCR 任务失败，请确认 FastAPI 服务已启动')
   }
-}
-
-function openUploadRegionJob() {
-  if (!selectedFile.value) { message.warning('请先选择图片文件'); return }
-  if (!selectedFile.value.type.startsWith('image/')) {
-    message.warning('首期局部框选识别仅支持 PNG、JPG 图片')
-    return
-  }
-  regionJobMode.value = 'upload'
-  regionJobOpen.value = true
 }
 
 function openSourceRegionJob() {
   if (!page.value?.imageUrl) { message.warning('原始图片不可用，无法创建区域任务'); return }
   if (bboxEditMode.value) { message.warning('请先退出检测框编辑模式'); return }
-  regionJobMode.value = 'source'
   regionJobOpen.value = true
 }
 
@@ -620,19 +613,10 @@ async function submitRegionJob(name: string, regions: RegionDraft[]) {
   if (!currentModel.value) return
   regionJobSubmitting.value = true
   try {
-    let fileId: string | undefined
-    let sourceJobId: string | undefined
-    if (regionJobMode.value === 'upload') {
-      if (!selectedFile.value) return
-      jobState.value = 'running'
-      const uploaded = await uploadOcrFile(selectedFile.value, (_stage, value) => { progress.value = value })
-      fileId = uploaded.id
-    } else {
-      sourceJobId = typeof route.params.taskId === 'string' ? route.params.taskId : undefined
-      if (!sourceJobId) return
-    }
+    const sourceJobId = typeof route.params.taskId === 'string' ? route.params.taskId : undefined
+    if (!sourceJobId) return
     const taskId = await createRegionOcrTask({
-      name, model: currentModel.value, regions, fileId, sourceJobId,
+      name, model: currentModel.value, regions, sourceJobId,
     })
     regionJobOpen.value = false
     progress.value = 0
@@ -640,7 +624,7 @@ async function submitRegionJob(name: string, regions: RegionDraft[]) {
     message.success('独立区域 OCR 任务已创建，来源任务未被修改')
     await navigateCreatedTask(taskId)
   } catch {
-    jobState.value = regionJobMode.value === 'upload' ? 'ready' : 'done'
+    jobState.value = 'done'
     progress.value = 0
     message.error('区域 OCR 任务创建失败，请检查选区和原始文件')
   } finally {
@@ -757,8 +741,9 @@ function previewUpload() {
   pendingFile.value = selectedFile.value
   uploadPreviewOpen.value = true
 }
-function saveUpload(file: File) {
+function saveUpload(file: File, regions: RegionDraft[]) {
   selectedFile.value = file
+  selectedRegions.value = copyRegions(regions)
   pendingFile.value = undefined
   uploadPreviewOpen.value = false
   jobState.value = 'ready'
@@ -768,6 +753,7 @@ function saveUpload(file: File) {
 function deleteUpload() {
   pendingFile.value = undefined
   selectedFile.value = undefined
+  selectedRegions.value = []
   uploadPreviewOpen.value = false
   jobState.value = 'ready'
   progress.value = 0
@@ -785,7 +771,7 @@ async function handleExport(mode: ExportMode) {
 
 <template>
   <div class="workspace-view" :inert="datasetReviewSaving || bboxSaving">
-    <UploadPanel :models="availableModels" :selected-model="selectedModel" :current-model="currentModel" :job-state="jobState" :progress="progress" :file-name="selectedFileName" :file-meta="selectedFileMeta" :has-file="Boolean(selectedFile)" @update:selected-model="selectedModel = $event" @upload="handleUpload" @preview="previewUpload" @run="runOcr" @region-run="openUploadRegionJob" />
+    <UploadPanel :models="availableModels" :selected-model="selectedModel" :current-model="currentModel" :job-state="jobState" :progress="progress" :file-name="selectedFileName" :file-meta="selectedFileMeta" :has-file="Boolean(selectedFile)" :region-count="selectedRegions.length" @update:selected-model="selectedModel = $event" @upload="handleUpload" @preview="previewUpload" @run="runOcr" />
     <div v-if="taskLoading" class="workspace-empty"><a-spin size="large" /><p>正在加载任务数据…</p></div>
     <OcrProgressCard v-else-if="polledTask && !['succeeded', 'partial_success'].includes(polledTask.jobStatus || 'queued')" :task="polledTask" :elapsed-ms="elapsedMs" :request-failed="Boolean(pollingError)" @retry="retryTask" />
     <Splitpanes v-else-if="page" ref="workspace" class="workspace">
@@ -806,14 +792,13 @@ async function handleExport(mode: ExportMode) {
     </div>
     <CorrectionModal v-model:open="correctionOpen" :item="correctionTarget" :saving="reviewSaving" @save="saveCorrection" />
     <CommentDrawer v-model:open="commentOpen" :item="selectedItem" :current-user-id="user?.id" :saving="reviewSaving" @save="saveComment" @update-comment="editComment" @delete-comment="removeComment" />
-    <UploadPreviewModal :open="uploadPreviewOpen" :file="pendingFile" @close="uploadPreviewOpen = false" @delete="deleteUpload" @save="saveUpload" />
+    <UploadPreviewModal :open="uploadPreviewOpen" :file="pendingFile" :initial-regions="pendingFile === selectedFile ? selectedRegions : []" @close="uploadPreviewOpen = false" @delete="deleteUpload" @save="saveUpload" />
     <RegionJobModal
       :open="regionJobOpen"
-      :file="regionJobMode === 'upload' ? selectedFile : undefined"
-      :image-url="regionJobMode === 'source' ? page?.imageUrl : undefined"
-      :source-width="regionJobMode === 'source' ? page?.sourceWidth : undefined"
-      :source-height="regionJobMode === 'source' ? page?.sourceHeight : undefined"
-      :initial-name="`${regionJobMode === 'source' ? polledTask?.name || page?.label || '任务' : selectedFile?.name.replace(/\.[^.]+$/, '') || '图片'}-区域识别`"
+      :image-url="page?.imageUrl"
+      :source-width="page?.sourceWidth"
+      :source-height="page?.sourceHeight"
+      :initial-name="`${polledTask?.name || page?.label || '任务'}-区域识别`"
       :submitting="regionJobSubmitting"
       @close="regionJobOpen = false"
       @confirm="submitRegionJob"

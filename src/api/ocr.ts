@@ -396,6 +396,23 @@ export async function uploadAndCreateOcrTask(
   return jobResponse.data.data.id
 }
 
+export async function uploadAndCreateOcrTaskFromSelection(
+  file: File,
+  model: Pick<ModelOption, 'value' | 'version'>,
+  regions: RegionDraft[],
+  onStage?: (stage: UploadProgressStage, progress: number) => void,
+): Promise<string> {
+  if (!regions.length) return uploadAndCreateOcrTask(file, model, onStage)
+  const uploaded = await uploadOcrFile(file, onStage)
+  onStage?.('job', 90)
+  return createRegionOcrTask({
+    name: file.name.replace(/\.[^.]+$/, '') || file.name,
+    model,
+    regions,
+    fileId: uploaded.id,
+  })
+}
+
 // 复用历史任务的原始文件创建一次完整识别，无需浏览器重新上传。
 export async function rerunOcrTask(
   taskId: string,

@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { DeleteOutlined, PlusOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import type { RegionDraft } from '../api/ocr'
+import { MAX_OCR_REGIONS, copyRegions, regionBboxFromPoints } from '../regionSelection'
 
 const props = defineProps<{
   open: boolean
@@ -54,7 +55,7 @@ function point(event: PointerEvent) {
 }
 
 function begin(event: PointerEvent) {
-  if (regions.value.length >= 20) { message.warning('单页最多框选 20 个区域'); return }
+  if (regions.value.length >= MAX_OCR_REGIONS) { message.warning(`单页最多框选 ${MAX_OCR_REGIONS} 个区域`); return }
   const current = point(event)
   if (!current) return
   ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
@@ -73,11 +74,8 @@ function finish() {
   if (!draft.value) return
   const box = draft.value
   draft.value = undefined
-  const bbox: RegionDraft['bbox'] = [
-    Math.round(Math.min(box.x1, box.x2)), Math.round(Math.min(box.y1, box.y2)),
-    Math.round(Math.max(box.x1, box.x2)), Math.round(Math.max(box.y1, box.y2)),
-  ]
-  if (bbox[2] - bbox[0] < 16 || bbox[3] - bbox[1] < 16) {
+  const bbox = regionBboxFromPoints([box.x1, box.y1], [box.x2, box.y2], width.value, height.value)
+  if (!bbox) {
     message.warning('识别区域不能小于 16 × 16 px')
     return
   }
@@ -101,7 +99,7 @@ function confirm() {
   const normalizedName = name.value.trim()
   if (!normalizedName) { message.warning('请输入任务名称'); return }
   if (!regions.value.length) { message.warning('请至少框选一个识别区域'); return }
-  emit('confirm', normalizedName, regions.value.map(region => ({ ...region, bbox: [...region.bbox] })))
+  emit('confirm', normalizedName, copyRegions(regions.value))
 }
 </script>
 

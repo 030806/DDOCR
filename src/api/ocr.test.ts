@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { apiClient } from './client'
-import { createComment, createCorrection, createRegionOcrTask, deleteComment, deleteTask, exportTaskResults, getModels, getOcrPages, mapApiJob, mapApiResult, rerunOcrTask, saveResultEdits, updateComment, updateResultReviewStatus, updateResultTable, uploadAndCreateOcrTask } from './ocr'
+import { createComment, createCorrection, createRegionOcrTask, deleteComment, deleteTask, exportTaskResults, getModels, getOcrPages, mapApiJob, mapApiResult, rerunOcrTask, saveResultEdits, updateComment, updateResultReviewStatus, updateResultTable, uploadAndCreateOcrTask, uploadAndCreateOcrTaskFromSelection } from './ocr'
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
@@ -182,6 +182,35 @@ describe('OCR API adapters', () => {
       model_id: 'mock', model_version: '1.0.0',
       pages: [{ page_no: 1, regions: [{ client_id: 'roi-1', bbox: [100, 120, 400, 300] }] }],
     })
+  })
+
+  it('uses the normal job endpoint when preview has no selected regions', async () => {
+    const post = vi.spyOn(apiClient, 'post')
+      .mockResolvedValueOnce({ data: { data: { file_id: 'file-1', upload_headers: {} } } } as never)
+      .mockResolvedValueOnce({ data: { data: { id: 'file-1' } } } as never)
+      .mockResolvedValueOnce({ data: { data: { id: 'job-full' } } } as never)
+    vi.spyOn(apiClient, 'put').mockResolvedValue({} as never)
+    const file = new File(['image'], 'terminal.png', { type: 'image/png' })
+
+    await expect(uploadAndCreateOcrTaskFromSelection(file, { value: 'mock', version: '1.0.0' }, []))
+      .resolves.toBe('job-full')
+    expect(post).toHaveBeenNthCalledWith(3, '/ocr/jobs', expect.objectContaining({ file_id: 'file-1' }))
+  })
+
+  it('uses the region job endpoint when preview has selected regions', async () => {
+    const post = vi.spyOn(apiClient, 'post')
+      .mockResolvedValueOnce({ data: { data: { file_id: 'file-1', upload_headers: {} } } } as never)
+      .mockResolvedValueOnce({ data: { data: { id: 'file-1' } } } as never)
+      .mockResolvedValueOnce({ data: { data: { id: 'job-region' } } } as never)
+    vi.spyOn(apiClient, 'put').mockResolvedValue({} as never)
+    const file = new File(['image'], 'terminal.png', { type: 'image/png' })
+
+    await expect(uploadAndCreateOcrTaskFromSelection(file, { value: 'mock', version: '1.0.0' }, [
+      { clientId: 'roi-1', bbox: [20, 30, 180, 120] },
+    ])).resolves.toBe('job-region')
+    expect(post).toHaveBeenNthCalledWith(3, '/ocr/region-jobs', expect.objectContaining({
+      file_id: 'file-1', pages: [{ page_no: 1, regions: [{ client_id: 'roi-1', bbox: [20, 30, 180, 120] }] }],
+    }))
   })
 
   it('keeps the uploaded image URL and dimensions on API pages', async () => {
