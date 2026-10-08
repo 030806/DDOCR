@@ -2,9 +2,9 @@ from io import BytesIO
 from uuid import uuid4
 
 from openpyxl import load_workbook
-from sqlalchemy import update
+from sqlalchemy import select, update
 
-from app.models.schema import results
+from app.models.schema import files, ocr_jobs, results, terminal_events, terminal_reviews, terminal_sides, terminal_tasks
 from app.services.terminal import merge_rows
 from tests.test_api import client, workflow, register_headers
 from tests.ocr_fakes import wait_for_job
@@ -28,6 +28,33 @@ def test_additive_migration_upgrade_and_downgrade(tmp_path):
             assert 'fingerprint' in {c['name'] for c in inspect(connection).get_columns('terminal_reviews')}
             migration.downgrade()
             assert not inspect(connection).get_table_names()
+
+
+def test_terminal_soft_delete_migration_upgrade_and_downgrade(tmp_path):
+    import importlib.util
+    from pathlib import Path
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import create_engine, inspect
+
+    versions = Path(__file__).parents[1] / 'migrations/versions'
+    def load_migration(name):
+        spec = importlib.util.spec_from_file_location(name, versions / name)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    initial = load_migration('f280_terminal_tasks.py')
+    deletion = load_migration('c83e4a610b7d_soft_delete_terminal_tasks.py')
+    engine = create_engine(f"sqlite:///{tmp_path / 'delete-migration.db'}")
+    with engine.begin() as connection:
+        with Operations.context(MigrationContext.configure(connection)):
+            initial.upgrade()
+            deletion.upgrade()
+            assert 'deleted_at' in {c['name'] for c in inspect(connection).get_columns('terminal_tasks')}
+            deletion.downgrade()
+            assert 'deleted_at' not in {c['name'] for c in inspect(connection).get_columns('terminal_tasks')}
+            initial.downgrade()
 
 
 def source(id, number, text=None):
@@ -148,3 +175,61 @@ def test_manual_unlink_relink_conflicts_and_deleted_source(tmp_path):
         api.delete(f"/api/v1/ocr/jobs/{task['sides']['right']['job_id']}", headers=headers)
         task = api.get(path, headers=headers).json()['data']
         assert task['sides']['right']['status'] == 'unavailable'
+
+
+def test_soft_delete_hides_terminal_task_but_keeps_source_and_audit(tmp_path):
+    with client(tmp_path) as api:
+        task, headers = setup_pair(api)
+        path = f"/api/v1/terminal-tasks/{task['id']}"
+        original_jobs = {side['job_id'] for side in task['sides'].values()}
+        row = task['rows'][0]
+        task = api.patch(path + '/rows', headers=headers, json=version(task) | {
+            'rows': [{'id': row['id'], 'confirmed': True, 'note': '已核对'}]}).json()['data']
+        exported = api.post(path + '/exports', headers=headers, json=version(task) | {'scope': 'all'})
+        assert exported.status_code == 200
+        download_url = exported.json()['data']['download_url']
+        other = register_headers(api, '13800138000', 'OTHER')
+        assert api.delete(path, headers=other | {'If-Match': f'"{task["revision"]}"'}).status_code == 404
+        assert api.delete(path, headers={'If-Match': f'"{task["revision"]}"'}).status_code == 401
+        assert api.delete(path, headers=headers | {'If-Match': 'bad'}).status_code == 422
+        assert api.delete(path, headers=headers | {'If-Match': '"0"'}).status_code == 409
+        assert api.get(path, headers=headers).status_code == 200
+
+        delete_headers = headers | {'If-Match': f'"{task["revision"]}"'}
+        assert api.delete(path, headers=delete_headers).status_code == 204
+        assert api.delete(path, headers=delete_headers).status_code == 204
+        assert api.get(path, headers=headers).status_code == 404
+        assert api.get(path + '/rows', headers=headers).status_code == 404
+        assert api.get(download_url, headers=headers).status_code == 404
+        assert api.get('/api/v1/terminal-tasks', headers=headers).json()['data']['items'] == []
+        assert api.patch(path + '/rows', headers=headers, json=version(task) | {
+            'rows': [{'id': task['rows'][0]['id'], 'confirmed': False, 'note': ''}]}).status_code == 404
+
+        for job_id in original_jobs:
+            assert api.get(f'/api/v1/ocr/jobs/{job_id}', headers=headers).status_code == 200
+            assert api.get(f'/api/v1/ocr/jobs/{job_id}/pages/1/results', headers=headers).status_code == 200
+        with api.app.state.service.store.engine.connect() as db:
+            deleted = db.execute(select(terminal_tasks).where(terminal_tasks.c.id == task['id'])).mappings().one()
+            assert deleted['deleted_at'] is not None
+            assert db.execute(select(terminal_sides).where(terminal_sides.c.task_id == task['id'])).first()
+            assert db.execute(select(terminal_reviews).where(terminal_reviews.c.task_id == task['id'])).first()
+            assert db.execute(select(terminal_events).where(terminal_events.c.task_id == task['id'], terminal_events.c.action == 'delete')).first()
+            assert db.execute(select(terminal_events).where(terminal_events.c.task_id == task['id'], terminal_events.c.action == 'export')).first()
+            assert db.execute(select(ocr_jobs).where(ocr_jobs.c.id.in_(original_jobs))).first()
+            file_ids = db.execute(select(ocr_jobs.c.file_id).where(ocr_jobs.c.id.in_(original_jobs))).scalars().all()
+            assert db.execute(select(files).where(files.c.id.in_(file_ids))).first()
+
+
+def test_soft_delete_keeps_list_pagination_dense(tmp_path):
+    with client(tmp_path) as api:
+        headers = register_headers(api)
+        created = [api.post('/api/v1/terminal-tasks', headers=headers, json={'name': name}).json()['data']
+                   for name in ('X1', 'X2', 'X3')]
+        deleted = created[1]
+        assert api.delete(f"/api/v1/terminal-tasks/{deleted['id']}",
+                          headers=headers | {'If-Match': '"0"'}).status_code == 204
+        first = api.get('/api/v1/terminal-tasks?offset=0&limit=1', headers=headers).json()['data']
+        second = api.get('/api/v1/terminal-tasks?offset=1&limit=1', headers=headers).json()['data']
+        assert [first['items'][0]['id'], second['items'][0]['id']] == [created[2]['id'], created[0]['id']]
+        assert first['next_offset'] == 1
+        assert second['next_offset'] is None

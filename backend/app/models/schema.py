@@ -35,6 +35,7 @@ terminal_tasks = Table(
     Column("links", JSON_VALUE, nullable=False, server_default="[]"),
     Column("created_at", String(40), nullable=False),
     Column("updated_at", String(40), nullable=False),
+    Column("deleted_at", DateTime(timezone=True)),
 )
 terminal_sides = Table(
     "terminal_sides", Base.metadata,

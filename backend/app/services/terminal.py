@@ -74,7 +74,8 @@ class TerminalService:
         self.engine = core.store.engine
 
     def task(self, db, task_id, owner, lock=False):
-        query = select(terminal_tasks).where(terminal_tasks.c.id == task_id, terminal_tasks.c.user_id == owner)
+        query = select(terminal_tasks).where(terminal_tasks.c.id == task_id, terminal_tasks.c.user_id == owner,
+                                             terminal_tasks.c.deleted_at.is_(None))
         row = db.execute(query.with_for_update() if lock else query).mappings().first()
         if not row:
             raise HTTPException(404, "端子排任务不存在")
@@ -115,7 +116,8 @@ class TerminalService:
 
     def listing(self, owner, offset=0, limit=50):
         with Session(self.engine) as db:
-            tasks = db.execute(select(terminal_tasks).where(terminal_tasks.c.user_id == owner)
+            tasks = db.execute(select(terminal_tasks).where(terminal_tasks.c.user_id == owner,
+                                                           terminal_tasks.c.deleted_at.is_(None))
                                .order_by(terminal_tasks.c.created_at.desc(), terminal_tasks.c.id).offset(offset).limit(limit + 1)).mappings().all()
             output = []
             for task in tasks[:limit]:
@@ -124,6 +126,23 @@ class TerminalService:
                     "row_count": len(state["rows"]), "confirmed_count": sum(r["confirmed"] for r in state["rows"]),
                     "conflict_count": sum(r["conflict"] for r in state["rows"])})
             return {"items": output, "next_offset": offset + limit if len(tasks) > limit else None}
+
+    def delete_task(self, task_id, owner, base_revision):
+        now = datetime.now(UTC)
+        with Session(self.engine) as db, db.begin():
+            task = db.execute(select(terminal_tasks).where(terminal_tasks.c.id == task_id,
+                terminal_tasks.c.user_id == owner).with_for_update()).mappings().first()
+            if not task:
+                raise HTTPException(404, "端子排任务不存在")
+            if task["deleted_at"] is not None:
+                return
+            if task["revision"] != base_revision:
+                raise HTTPException(409, "任务已更新，请刷新后重试")
+            db.execute(update(terminal_tasks).where(terminal_tasks.c.id == task_id).values(
+                deleted_at=now, revision=task["revision"] + 1, updated_at=now.isoformat()))
+            db.execute(insert(terminal_events).values(id=str(uuid4()), task_id=task_id, user_id=owner,
+                action="delete", snapshot={"name": task["name"], "base_revision": base_revision},
+                created_at=now.isoformat()))
 
     def execute(self, action, task_id, body, owner, key=None):
         route = f"terminal/{task_id or 'new'}/{action}"

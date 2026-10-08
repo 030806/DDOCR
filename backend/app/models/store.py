@@ -37,6 +37,10 @@ class Store:
     def _upgrade_legacy_sqlite_schema(self) -> None:
         """Apply additive compatibility upgrades to create_all-managed local DBs."""
         inspector = inspect(self.engine)
+        if "terminal_tasks" in inspector.get_table_names():
+            if "deleted_at" not in {column["name"] for column in inspector.get_columns("terminal_tasks")}:
+                with self.engine.begin() as connection:
+                    connection.execute(text("ALTER TABLE terminal_tasks ADD COLUMN deleted_at DATETIME"))
         if "ocr_jobs" in inspector.get_table_names():
             if "result_version" not in {column["name"] for column in inspector.get_columns("ocr_jobs")}:
                 with self.engine.begin() as connection:

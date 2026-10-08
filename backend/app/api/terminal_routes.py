@@ -1,5 +1,5 @@
 from typing import Annotated, Literal
-from fastapi import APIRouter, Header, Request, Response, Query
+from fastapi import APIRouter, Header, HTTPException, Request, Response, Query
 from pydantic import BaseModel, Field
 from app.api.routes import authenticated_user, service
 from app.services.terminal import TerminalService
@@ -65,6 +65,17 @@ def listing(request: Request, authorization: Auth = None, offset: int = Query(0,
 def detail(task_id: str, request: Request, authorization: Auth = None):
     actor = authenticated_user(request, authorization)
     return envelope(TerminalService(service(request)).get(task_id, actor["id"]))
+
+
+@router.delete("/{task_id}", status_code=204)
+def delete_task(task_id: str, request: Request, authorization: Auth = None,
+                if_match: str = Header(alias="If-Match")):
+    actor = authenticated_user(request, authorization)
+    validator = if_match.strip('"')
+    if not validator.isdecimal():
+        raise HTTPException(422, "无效的任务修订号")
+    TerminalService(service(request)).delete_task(task_id, actor["id"], int(validator))
+    return Response(status_code=204)
 
 
 @router.put("/{task_id}/sides/{side}")

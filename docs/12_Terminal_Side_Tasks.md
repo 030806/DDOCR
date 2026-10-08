@@ -15,6 +15,7 @@
 
 重新识别时旧侧别关联保持不变，新识别完成后采用新结果。关联失败可点击「采用当前结果」重试，不必重新上传。
 独立 OCR 历史任务及旧导出入口继续保留。左右侧 Tab 的页码、选中结果及缩放在当前应用会话内保留。
+任务列表每张卡片可点击「删除」，二次确认后将端子排任务软删除并刷新列表。删除前会校验任务修订号；若任务已在其他窗口变更，返回 409 并要求核对后重试。删除不会删除关联的左右侧 OCR 识别任务、上传文件或纠正历史。已删除任务的列表、详情、修改和导出下载入口不可访问；数据库保留侧别关联、合并复核和导出事件用于审计，重复删除返回 204。
 
 ## 对应与复核规则
 
@@ -40,6 +41,7 @@
 | POST 空路径 | `name` | 新任务 |
 | GET 空路径 | `offset=0&limit=50`，limit 最大 100 | `items,next_offset`，带侧别、行数和复核计数 |
 | GET `/{id}` 或 `/{id}/rows` | 无 | 任务、侧别、合并行、`revision,version` |
+| DELETE `/{id}` | `If-Match: "<revision>"` | 204；修订号过期返回 409，非所有者或不存在返回 404 |
 | PUT `/{id}/sides/{left或right}` | `job_id,page_no,base_revision` | 更新后的任务 |
 | PATCH `/{id}/rows` | `base_revision,version,rows:[{id,confirmed,note}]` | 更新后的任务，支持批量 |
 | POST `/{id}/links` | `base_revision,version,left,right`，来源 ID 或 null | 更新后的任务 |
@@ -54,6 +56,7 @@
 ## 数据库与部署
 
 新增四张表：`terminal_tasks`、`terminal_sides`、`terminal_reviews`、`terminal_events`。
+软删除迁移 `c83e4a610b7d` 为 `terminal_tasks` 增加可空的 `deleted_at`。生产 PostgreSQL 部署前需执行 `python -m alembic upgrade head`；已有本地 SQLite 数据库在启动时补齐该字段。
 任务持有用户及租户 ID；侧别引用现有 OCR 任务和页码；复核保存来源摘要、操作人和时间；事件保留关联、配对、复核和导出快照。
 不迁移或猜测历史 OCR 任务侧别，由用户主动关联。
 

@@ -291,5 +291,5 @@ result_count, review_count, created_by{id,name}, error
 `PATCH /ocr/results/{result_id}/table` 需登录且仅允许任务所有者调用。请求体为 `{"terminal_number":"X1","manual_confirmed":true,"table_note":"已核对","base_revision":0}`，响应包含结果 ID、三个字段和递增的 `table_revision`。修订号过期返回 409；端子号最多 500 字符，备注最多 1000 字符。
 # 端子排任务新增接口
 
-新增 `/api/v1/terminal-tasks` 接口族用于左右侧关联、合并复核和六列导出，不修改原 OCR 接口。
+新增 `/api/v1/terminal-tasks` 接口族用于左右侧关联、合并复核、六列导出和任务软删除，不修改原 OCR 接口。
 请求字段、版本控制及下载规则见 [左右侧任务 API](12_Terminal_Side_Tasks.md#新接口)。
