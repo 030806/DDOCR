@@ -6,8 +6,8 @@ import { isAxiosError } from 'axios'
 import { Pane, Splitpanes } from 'splitpanes'
 import 'splitpanes/dist/splitpanes.css'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter, type NavigationGuardNext } from 'vue-router'
-import type { ModelOption, OcrItem, OcrPage, OcrPolygon, OcrReviewStatus } from '../types/ocr'
-import { createComment, createCorrection, createRegionOcrTask, deleteComment, getModels, getOcrPages, releasePageImages, rerunOcrTask, saveResultEdits, updateComment, updateResultReviewStatus, updateResultTable, uploadAndCreateOcrTaskFromSelection, type RegionDraft } from '../api/ocr'
+import type { ModelOption, OcrItem, OcrPage, OcrPolygon, OcrReviewStatus, TerminalPoint } from '../types/ocr'
+import { createComment, createCorrection, createRegionOcrTask, deleteComment, getModels, getOcrPages, releasePageImages, rerunOcrTask, saveResultEdits, saveTerminalPoints, updateComment, updateResultReviewStatus, updateResultTable, uploadAndCreateOcrTaskFromSelection, type RegionDraft } from '../api/ocr'
 import { createSplitLayout } from '../splitLayout'
 import { completeDatasetReview, getDatasetStatuses, type DatasetStatus } from '../api/dataset'
 import { exportOcrResults, type ExportMode } from '../exportResults'
@@ -27,6 +27,7 @@ import { createEmptyWorkspaceContent } from '../workspaceState'
 import { bboxToPolygon, cloneEditableItems, polygonToBbox, type EditableOcrItem } from '../bboxEditing'
 import { terminalSidePath, terminalViewPositions } from '../terminalState'
 import { copyRegions } from '../regionSelection'
+import { orderedTerminalPoints } from '../terminalPairTable'
 import { applyCorrectionToItems } from '../correctionState'
 
 const emit = defineEmits<{ completed: [jobId: string, pageCount: number] }>()
@@ -74,7 +75,12 @@ const bboxDraftItems = ref<EditableOcrItem[]>([])
 const bboxUndoStack = ref<EditableOcrItem[][]>([])
 const bboxRedoStack = ref<EditableOcrItem[][]>([])
 const bboxDirty = ref(false)
-const datasetReviewed = computed(() => !bboxDirty.value && !pendingGeometrySnapshot.value && datasetStatus.value && datasetStatus.value.state !== 'unreviewed')
+const terminalEditMode = ref(false)
+const terminalDraftPoints = ref<TerminalPoint[]>([])
+const terminalDirty = ref(false)
+const terminalSaving = ref(false)
+const selectedTerminalId = ref('')
+const datasetReviewed = computed(() => !bboxDirty.value && !terminalDirty.value && !pendingGeometrySnapshot.value && datasetStatus.value && datasetStatus.value.state !== 'unreviewed')
 const pendingGeometrySnapshot = ref<EditableOcrItem[]>()
 const pendingGeometryId = ref('')
 const manualBbox = ref<OcrItem['bbox']>()
@@ -89,9 +95,12 @@ let datasetStatusEpoch = 0
 const { task: polledTask, requestError: pollingError, elapsedMs, start: startPolling, stop: stopPolling, reset: resetPolling } = useOcrJobPolling()
 
 const page = computed(() => pages.value[currentPage.value - 1])
-const resultPanelPage = computed(() => page.value && bboxEditMode.value
-  ? { ...page.value, items: bboxDraftItems.value }
-  : page.value)
+const resultPanelPage = computed(() => {
+  if (!page.value) return undefined
+  if (bboxEditMode.value) return { ...page.value, items: bboxDraftItems.value }
+  if (terminalEditMode.value) return { ...page.value, terminalPoints: terminalDraftPoints.value }
+  return page.value
+})
 const displayPage = computed(() => {
   const activePage = resultPanelPage.value
   if (!activePage || !visibleResultIds.value) return activePage
@@ -146,13 +155,13 @@ onBeforeUnmount(() => {
 })
 
 function handleBeforeUnload(event: BeforeUnloadEvent) {
-  if (!bboxDirty.value && !pendingGeometrySnapshot.value && !resultPanel.value?.hasPendingEdits()) return
+  if (!bboxDirty.value && !pendingGeometrySnapshot.value && !terminalDirty.value && !resultPanel.value?.hasPendingEdits()) return
   event.preventDefault()
   event.returnValue = ''
 }
 
 async function confirmBboxNavigation(next: NavigationGuardNext) {
-  if (datasetReviewSaving.value || bboxSaving.value) {
+  if (datasetReviewSaving.value || bboxSaving.value || terminalSaving.value) {
     message.info('正在保存，请完成后再切换任务')
     next(false)
     return
@@ -164,6 +173,14 @@ async function confirmBboxNavigation(next: NavigationGuardNext) {
       Modal.confirm({ title: '表格中有未保存的修改', content: '请重试保存失败的单元格，或确认放弃这些修改。', okText: '放弃并离开', cancelText: '继续编辑', onOk: () => next(), onCancel: () => next(false) })
       return
     }
+  }
+  if (terminalDirty.value) {
+    Modal.confirm({
+      title: '存在未保存的端子点修改', content: '离开后本次增删和移动操作将丢失。',
+      okText: '放弃并离开', cancelText: '取消',
+      onOk: () => { cancelTerminalEdit(); next() }, onCancel: () => next(false),
+    })
+    return
   }
   if (!bboxEditMode.value || (!bboxDirty.value && !pendingGeometrySnapshot.value)) { next(); return }
   Modal.confirm({
@@ -185,13 +202,14 @@ onBeforeRouteUpdate((_to, _from, next) => confirmBboxNavigation(next))
 onBeforeRouteLeave((_to, _from, next) => confirmBboxNavigation(next))
 
 async function prepareSideChange() {
-  if (datasetReviewSaving.value || bboxSaving.value || reviewSaving.value || resultMutationSaving.value || correctionOpen.value || manualTextOpen.value) {
+  if (datasetReviewSaving.value || bboxSaving.value || terminalSaving.value || reviewSaving.value || resultMutationSaving.value || correctionOpen.value || manualTextOpen.value) {
     message.info('请先完成当前编辑或保存'); return false
   }
   if (resultPanel.value && !await resultPanel.value.flushPendingEdits()) {
     message.warning('请先修正或重试保存失败的单元格'); return false
   }
   if (bboxDirty.value || pendingGeometrySnapshot.value) { message.warning('请先保存检测框修改'); return false }
+  if (terminalDirty.value) { message.warning('请先保存端子点修改'); return false }
   return true
 }
 defineExpose({ prepareSideChange })
@@ -265,6 +283,7 @@ function retryTask(): void {
 }
 
 watch(() => route.params.taskId, (taskId) => {
+  cancelTerminalEdit()
   datasetStatus.value = undefined
   const sequence = ++taskLoadSequence
   resetPolling()
@@ -311,6 +330,8 @@ function switchPage(no: number) {
     message.warning('请先保存或退出检测框编辑模式')
     return
   }
+  if (terminalDirty.value) { message.warning('请先保存端子点修改'); return }
+  if (terminalEditMode.value) cancelTerminalEdit()
   currentPage.value = no
   visibleResultIds.value = undefined
   selectedId.value = pages.value[no - 1].items[0]?.id || ''
@@ -323,6 +344,7 @@ function pushBboxHistory() {
 }
 
 function toggleBboxEdit() {
+  if (terminalEditMode.value) { message.warning('请先退出端子点编辑'); return }
   if (!bboxEditMode.value) {
     if (!page.value) return
     bboxDraftItems.value = cloneEditableItems(page.value.items.map(item => ({ ...item, editSource: 'ocr', editOperation: 'unchanged', geometryRevision: (item as EditableOcrItem).geometryRevision || 0 })))
@@ -344,6 +366,75 @@ function toggleBboxEdit() {
       pendingGeometryId.value = ''
     },
   })
+}
+
+function cancelTerminalEdit() {
+  terminalEditMode.value = false
+  terminalDirty.value = false
+  selectedTerminalId.value = ''
+  terminalDraftPoints.value = []
+}
+
+function toggleTerminalEdit() {
+  if (bboxEditMode.value) { message.warning('请先退出检测框编辑'); return }
+  if (terminalEditMode.value) {
+    if (terminalDirty.value) {
+      Modal.confirm({
+        title: '放弃未保存的端子点修改？',
+        okText: '放弃修改', cancelText: '继续编辑', onOk: cancelTerminalEdit,
+      })
+    } else cancelTerminalEdit()
+    return
+  }
+  if (!page.value?.terminalPoints) return
+  terminalDraftPoints.value = orderedTerminalPoints(page.value.terminalPoints.map(point => ({ ...point })))
+  terminalDirty.value = false
+  selectedTerminalId.value = ''
+  terminalEditMode.value = true
+}
+
+function createTerminalPoint(position: { x: number; y: number }) {
+  if (!terminalEditMode.value || terminalSaving.value) return
+  const point: TerminalPoint = { id: `draft-${crypto.randomUUID()}`, ...position, source: 'manual' }
+  terminalDraftPoints.value = orderedTerminalPoints([...terminalDraftPoints.value, point])
+  selectedTerminalId.value = point.id
+  terminalDirty.value = true
+}
+
+function moveTerminalPoint(id: string, position: { x: number; y: number }) {
+  if (!terminalEditMode.value || terminalSaving.value) return
+  terminalDraftPoints.value = orderedTerminalPoints(terminalDraftPoints.value.map(point =>
+    point.id === id ? { ...point, ...position } : point))
+  selectedTerminalId.value = id
+  terminalDirty.value = true
+}
+
+function deleteTerminalPoint() {
+  if (!terminalEditMode.value || terminalSaving.value || !selectedTerminalId.value) return
+  terminalDraftPoints.value = terminalDraftPoints.value.filter(point => point.id !== selectedTerminalId.value)
+  selectedTerminalId.value = ''
+  terminalDirty.value = true
+}
+
+async function saveTerminalEdits() {
+  const taskId = route.params.taskId
+  if (terminalSaving.value || !terminalEditMode.value || !page.value || typeof taskId !== 'string') return
+  terminalSaving.value = true
+  try {
+    const saved = await saveTerminalPoints(
+      taskId, page.value.no, terminalDraftPoints.value, page.value.terminalRevision || 0,
+    )
+    page.value.terminalPoints = saved.points
+    page.value.terminalRevision = saved.revision
+    invalidateDatasetReview()
+    cancelTerminalEdit()
+    message.success('端子点修改已保存')
+  } catch (error) {
+    message.error(isAxiosError(error) && error.response?.status === 409
+      ? '端子点已被其他用户修改，请刷新后重试' : '端子点保存失败')
+  } finally {
+    terminalSaving.value = false
+  }
 }
 
 function previewDraftPolygon(id: string, polygon: OcrPolygon) {
@@ -763,7 +854,7 @@ async function handleExport(mode: ExportMode) {
     // TODO(integration): Use the backend export job/download endpoints so exports
     // include server-side corrections and comments from every requested page.
     if (!page.value) return
-    await exportOcrResults(page.value.items, mode, page.value.no)
+    await exportOcrResults(page.value.items, mode, page.value.no, page.value.terminalPoints)
     message.success(mode === 'simple' ? '精简结果已导出' : '完整结果已导出')
   } catch { message.error('导出失败，请重试') }
 }
@@ -777,11 +868,15 @@ async function handleExport(mode: ExportMode) {
     <Splitpanes v-else-if="page" ref="workspace" class="workspace">
       <Pane :size="splitLayout.documentSizePercent" :min-size="splitLayout.documentMinPercent">
         <div class="document-workspace">
-          <DocumentViewer v-if="displayPage" :pages="pages" :page="displayPage" :current-page="currentPage" :selected-id="selectedId" :zoom="zoom" :job-state="jobState" :progress="progress" :edit-mode="bboxEditMode" :can-undo="Boolean(bboxUndoStack.length) && !pendingGeometrySnapshot" :can-redo="Boolean(bboxRedoStack.length) && !pendingGeometrySnapshot" :has-unsaved-changes="bboxDirty" :has-pending-geometry="Boolean(pendingGeometrySnapshot)" @page-change="switchPage" @select="selectItem" @zoom-change="zoom = $event" @edit-toggle="toggleBboxEdit" @undo="undoBboxEdit" @redo="redoBboxEdit" @save="saveBboxEdits" @polygon-preview="previewDraftPolygon" @geometry-confirm="confirmGeometryEdit" @geometry-cancel="cancelGeometryEdit" @create-bbox="beginManualBbox" @create-region-job="openSourceRegionJob" />
+          <DocumentViewer v-if="displayPage" :pages="pages" :page="displayPage" :current-page="currentPage" :selected-id="selectedId" :zoom="zoom" :job-state="jobState" :progress="progress" :edit-mode="bboxEditMode" :can-undo="Boolean(bboxUndoStack.length) && !pendingGeometrySnapshot" :can-redo="Boolean(bboxRedoStack.length) && !pendingGeometrySnapshot" :has-unsaved-changes="bboxDirty" :has-pending-geometry="Boolean(pendingGeometrySnapshot)"
+            :terminal-edit-mode="terminalEditMode" :terminal-dirty="terminalDirty" :terminal-saving="terminalSaving" :selected-terminal-id="selectedTerminalId"
+            @page-change="switchPage" @select="selectItem" @zoom-change="zoom = $event" @edit-toggle="toggleBboxEdit" @undo="undoBboxEdit" @redo="redoBboxEdit" @save="saveBboxEdits" @polygon-preview="previewDraftPolygon" @geometry-confirm="confirmGeometryEdit" @geometry-cancel="cancelGeometryEdit" @create-bbox="beginManualBbox" @create-region-job="openSourceRegionJob"
+            @terminal-toggle="toggleTerminalEdit" @terminal-save="saveTerminalEdits" @terminal-cancel="cancelTerminalEdit" @terminal-delete="deleteTerminalPoint"
+            @terminal-create="createTerminalPoint" @terminal-select="selectedTerminalId = $event" @terminal-move="moveTerminalPoint" />
         </div>
       </Pane>
       <Pane :size="splitLayout.resultSizePercent" :min-size="splitLayout.resultMinPercent">
-        <OCRResultPanel v-if="resultPanelPage" ref="resultPanel" :save-table="saveTableCell" :save-cable="saveCableCell" :page="resultPanelPage" :pages="pages" :selected-id="selectedId" :model-label="currentModel?.label || selectedModel" :low-confidence-threshold="settings.lowConfidenceThreshold" :show-confidence="settings.showConfidence" :can-undo-review="Boolean(lastReviewAction)" :dataset-reviewed="Boolean(datasetReviewed)" :dataset-review-saving="datasetReviewSaving" :dataset-review-disabled="jobState !== 'done' || taskLoading || reviewSaving || resultMutationSaving || bboxSaving || correctionOpen || manualTextOpen || Boolean(pendingGeometrySnapshot)" @complete-review="finishDatasetReview" @select="selectItem" @correct="openCorrection" @comment="openComment" @export="handleExport" @review="reviewResults" @visible-change="visibleResultIds = $event" @undo="undoReviewAction" />
+        <OCRResultPanel v-if="resultPanelPage" ref="resultPanel" :save-table="saveTableCell" :save-cable="saveCableCell" :page="resultPanelPage" :pages="pages" :selected-id="selectedId" :model-label="currentModel?.label || selectedModel" :low-confidence-threshold="settings.lowConfidenceThreshold" :show-confidence="settings.showConfidence" :can-undo-review="Boolean(lastReviewAction)" :dataset-reviewed="Boolean(datasetReviewed)" :dataset-review-saving="datasetReviewSaving" :dataset-review-disabled="jobState !== 'done' || taskLoading || reviewSaving || resultMutationSaving || bboxSaving || terminalSaving || terminalDirty || correctionOpen || manualTextOpen || Boolean(pendingGeometrySnapshot)" @complete-review="finishDatasetReview" @select="selectItem" @correct="openCorrection" @comment="openComment" @export="handleExport" @review="reviewResults" @visible-change="visibleResultIds = $event" @undo="undoReviewAction" />
       </Pane>
     </Splitpanes>
     <div v-else class="workspace-empty">

@@ -1,13 +1,20 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
-import type { OcrPage, OcrPolygon } from '../types/ocr'
+import type { OcrPage, OcrPolygon, TerminalPoint } from '../types/ocr'
+import { terminalPointFromPointer } from '../terminalPointEditing'
 import { bboxToCanvasRect, bboxToPolygon, canvasPointToSource, canvasRectToBbox, isValidPolygon, polygonToCanvasPoints, resultBoxColor, SELECTED_BOX_COLOR, translatePolygonWithinBounds, type CanvasRect, type ImageTransform } from '../bboxEditing'
 
-const props = defineProps<{ page: OcrPage; selectedId: string; zoom: number; editMode?: boolean }>()
+const props = defineProps<{
+  page: OcrPage; selectedId: string; zoom: number; editMode?: boolean
+  terminalEditMode?: boolean; selectedTerminalId?: string
+}>()
 const emit = defineEmits<{
   select: [id: string]
   polygonPreview: [id: string, polygon: OcrPolygon]
   create: [bbox: OcrPage['items'][number]['bbox']]
+  terminalCreate: [point: { x: number; y: number }]
+  terminalSelect: [id: string]
+  terminalMove: [id: string, point: { x: number; y: number }]
 }>()
 const stageConfig = computed(() => ({ width: 700 * props.zoom, height: 760 * props.zoom, scaleX: props.zoom, scaleY: props.zoom }))
 const sourceImage = shallowRef<HTMLImageElement>()
@@ -48,6 +55,18 @@ function canvasPolygon(item: OcrPage['items'][number]) {
 }
 function rectConfig(item: OcrPage['items'][number]) {
   return bboxToCanvasRect(item.bbox, editableTransform.value)
+}
+function terminalCanvasPoint(point: TerminalPoint) {
+  const transform = editableTransform.value
+  return { x: transform.x + point.x * transform.scale, y: transform.y + point.y * transform.scale }
+}
+function finishTerminalDrag(point: TerminalPoint, event: any) {
+  const transform = editableTransform.value
+  const position = event.target.position()
+  const x = Math.min(transform.sourceWidth, Math.max(0, (position.x - transform.x) / transform.scale))
+  const y = Math.min(transform.sourceHeight, Math.max(0, (position.y - transform.y) / transform.scale))
+  event.target.position(terminalCanvasPoint(point))
+  emit('terminalMove', point.id, { x, y })
 }
 function dragCorner(item: OcrPage['items'][number], index: number, event: any) {
   event.cancelBubble = true
@@ -96,6 +115,12 @@ function pointerInCanvas(event: any) {
 }
 function beginDrawing(event: any) {
   const targetName = event.target.name?.() || ''
+  if (props.terminalEditMode && ['canvas-background', 'source-image'].includes(targetName)) {
+    const pointer = event.target.getStage()?.getPointerPosition()
+    const point = pointer && terminalPointFromPointer(pointer, props.zoom, editableTransform.value)
+    if (point) emit('terminalCreate', point)
+    return
+  }
   if (!props.editMode || (event.target !== event.target.getStage() && !['canvas-background', 'source-image'].includes(targetName))) return
   const point = pointerInCanvas(event)
   if (!point) return
@@ -154,6 +179,16 @@ function finishDrawing() {
         </template>
       </template>
       <v-rect v-if="drawingRect" :config="{ ...drawingRect, stroke: '#1677ff', strokeWidth: 1.5, dash: [6, 4], fill: 'rgba(22,119,255,.08)' }" />
+    </v-layer>
+    <v-layer v-if="page.terminalPoints">
+      <v-circle v-for="point in page.terminalPoints" :key="point.id"
+        :config="{ ...terminalCanvasPoint(point), radius: selectedTerminalId === point.id ? 6 : 4.5,
+          fill: '#1677ff', stroke: '#ffffff', strokeWidth: 1.5,
+          draggable: Boolean(terminalEditMode), hitStrokeWidth: 10 }"
+        @mousedown="$event.cancelBubble = true"
+        @click="emit('terminalSelect', point.id)"
+        @tap="emit('terminalSelect', point.id)"
+        @dragend="finishTerminalDrag(point, $event)" />
     </v-layer>
   </v-stage>
 </template>

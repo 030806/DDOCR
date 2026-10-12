@@ -97,6 +97,17 @@ class ResultEditsCreate(BaseModel):
     deletes: list[ResultDelete] = Field(default_factory=list, max_length=500)
 
 
+class TerminalPointInput(BaseModel):
+    id: str = Field(min_length=1, max_length=100)
+    x: float
+    y: float
+
+
+class TerminalPointsUpdate(BaseModel):
+    base_revision: int = Field(ge=0)
+    points: list[TerminalPointInput] = Field(max_length=500)
+
+
 class ExportCreate(BaseModel):
     format: Literal["xlsx"] = "xlsx"
     mode: Literal["simple", "full"] = "full"

@@ -7,6 +7,7 @@ import type { ExportMode } from '../exportResults'
 import { filterOcrItems } from '../resultVisibility'
 import { sortOcrItemsByCoordinates } from '../ocrResultOrder'
 import { terminalNumberFillValues } from '../terminalNumberFill'
+import { terminalTableRows } from '../terminalPairTable'
 
 const props = defineProps<{
   page: OcrPage
@@ -134,7 +135,12 @@ const filteredItems = computed(() => filterOcrItems(props.page.items, {
 const displayedItems = computed(() => coordinateSorted.value
   ? sortOcrItemsByCoordinates(filteredItems.value)
   : filteredItems.value)
-const allVisibleSelected = computed(() => filteredItems.value.length > 0 && filteredItems.value.every(item => selectedIds.value.includes(item.id)))
+const hasTerminalResult = computed(() => Array.isArray(props.page.terminalPoints))
+const terminalRows = computed(() => terminalTableRows(props.page.terminalPoints || [], props.page.items))
+const visibleSelectionIds = computed(() => viewMode.value === 'table' && hasTerminalResult.value
+  ? terminalRows.value.map(row => row.selectionId) : displayedItems.value.map(item => item.id))
+const selectedReviewIds = computed(() => props.page.items.filter(item => selectedIds.value.includes(item.id)).map(item => item.id))
+const allVisibleSelected = computed(() => visibleSelectionIds.value.length > 0 && visibleSelectionIds.value.every(id => selectedIds.value.includes(id)))
 function scoreColor(score: number) {
   if (score < 0.90) return '#ef5350'
   if (score < 0.95) return '#42a5f5'
@@ -150,22 +156,23 @@ function toggleSelected(id: string, checked: boolean) {
 }
 
 function toggleAllVisible(checked: boolean) {
-  const visible = new Set(filteredItems.value.map(item => item.id))
+  const visible = new Set(visibleSelectionIds.value)
   selectedIds.value = checked
     ? [...new Set([...selectedIds.value, ...visible])]
     : selectedIds.value.filter(id => !visible.has(id))
 }
 
 function reviewSelected(status: OcrReviewStatus) {
-  if (!selectedIds.value.length) return
+  const ids = [...selectedReviewIds.value]
+  if (!ids.length) return
   const apply = () => {
-    emit('review', selectedIds.value, status)
+    emit('review', ids, status)
     selectedIds.value = []
   }
   if (status === 'deleted' || status === 'false_positive') {
     Modal.confirm({
       title: status === 'deleted' ? '确认删除识别结果' : '确认标记误检',
-      content: `本次操作将影响 ${selectedIds.value.length} 条结果，可通过恢复或撤销找回。`,
+      content: `本次操作将影响 ${ids.length} 条 OCR 结果，可通过恢复或撤销找回。`,
       okText: '确认', cancelText: '取消', onOk: apply,
     })
   } else apply()
@@ -188,6 +195,7 @@ async function fillSelectedTerminalNumbers() {
 }
 
 watch(displayedItems, items => emit('visible-change', items.map(item => item.id)), { immediate: true })
+watch(visibleSelectionIds, ids => { selectedIds.value = selectedIds.value.filter(id => ids.includes(id)) })
 watch(() => props.page.no, () => { selectedIds.value = []; coordinateSorted.value = false; Object.keys(drafts).forEach(key => delete drafts[key]) })
 </script>
 
@@ -198,7 +206,7 @@ watch(() => props.page.no, () => { selectedIds.value = []; coordinateSorted.valu
       <div class="result-mode-row" role="group" aria-label="识别结果显示方式">
       <button :class="{ active: viewMode === 'list' }" :aria-pressed="viewMode === 'list'" @click="viewMode = 'list'">列表显示</button>
       <button :class="{ active: viewMode === 'table' }" :aria-pressed="viewMode === 'table'" @click="viewMode = 'table'">表格显示</button>
-      <span v-if="viewMode === 'table'">修改后离开单元格自动保存</span>
+      <span v-if="viewMode === 'table'">{{ hasTerminalResult ? '端子号由蓝点数量生成；线号修改后自动保存' : '修改后离开单元格自动保存' }}</span>
     </div>
       <button class="copy-btn" :disabled="page.items.length < 2" @click="coordinateSorted = true">{{ coordinateSorted ? '已按坐标排序' : '按坐标排序' }}</button>
       <a-dropdown :trigger="['click']">
@@ -235,10 +243,11 @@ watch(() => props.page.no, () => { selectedIds.value = []; coordinateSorted.valu
     <div class="batch-review-bar">
       <a-checkbox :checked="allVisibleSelected" @update:checked="toggleAllVisible($event)">全选当前</a-checkbox>
       <span>已选 {{ selectedIds.length }} 项</span>
-      <button v-if="viewMode === 'list'" :disabled="!selectedIds.length" @click="reviewSelected('false_positive')"><WarningOutlined /> 标记误检</button>
-      <button v-else :disabled="!selectedIds.length || terminalNumberFilling" @click="fillSelectedTerminalNumbers"><EditOutlined /> {{ terminalNumberFilling ? '填充中' : '一键填充端子号' }}</button>
-      <button class="danger" :disabled="!selectedIds.length" @click="reviewSelected('deleted')"><DeleteOutlined /> 删除</button>
-      <button :disabled="!selectedIds.length" @click="reviewSelected('unreviewed')"><UndoOutlined /> 恢复</button>
+      <button v-if="viewMode === 'list'" :disabled="!selectedReviewIds.length" @click="reviewSelected('false_positive')"><WarningOutlined /> 标记误检</button>
+      <button v-else-if="!hasTerminalResult" :disabled="!selectedIds.length || terminalNumberFilling" @click="fillSelectedTerminalNumbers"><EditOutlined /> {{ terminalNumberFilling ? '填充中' : '一键填充端子号' }}</button>
+      <button class="danger" :disabled="!selectedReviewIds.length" @click="reviewSelected('deleted')"><DeleteOutlined /> 删除</button>
+      <button :disabled="!selectedReviewIds.length" @click="reviewSelected('unreviewed')"><UndoOutlined /> 恢复</button>
+      <span v-if="viewMode === 'table' && hasTerminalResult">删除和恢复仅作用于所选行中的 OCR 结果</span>
     </div>
     <div v-if="viewMode === 'list'" class="result-list">
       <article v-for="(item, displayIndex) in displayedItems" :key="item.id" :data-result-id="item.id" class="result-card" :class="{ selected: selectedId === item.id, corrected: item.corrected }" @click="emit('select', item.id)">
@@ -270,7 +279,16 @@ watch(() => props.page.no, () => { selectedIds.value = []; coordinateSorted.valu
     <div v-else class="result-table-scroll">
       <table class="result-table">
         <thead><tr><th scope="col">序号</th><th scope="col">端子号</th><th scope="col">线缆编号</th><th scope="col">人工确认</th><th scope="col">备注</th></tr></thead>
-        <tbody>
+        <tbody v-if="hasTerminalResult">
+          <tr v-for="row in terminalRows" :key="row.selectionId" :class="{ selected: selectedIds.includes(row.selectionId) || (row.item && selectedId === row.item.id) }" :data-result-id="row.item?.id" @click="row.item && emit('select', row.item.id)">
+            <td class="table-index"><a-checkbox :checked="selectedIds.includes(row.selectionId)" :aria-label="`选择第 ${row.index} 行`" @click.stop @update:checked="toggleSelected(row.selectionId, $event)" /> {{ String(row.index).padStart(2, '0') }}</td>
+            <td>{{ row.terminalNumber }}</td>
+            <td><template v-if="row.item"><div class="table-cable-cell"><input v-model="draftFor(row.item).cable" maxlength="500" :aria-label="`第 ${row.index} 行线缆编号`" :class="{ 'save-error': errors[fieldKey(row.item, 'cable')] }" @click.stop @blur="saveField(row.item, 'cable')" @keydown.enter.prevent="($event.target as HTMLInputElement).blur()" /><button v-if="errors[fieldKey(row.item, 'cable')]" class="retry-save" @click.stop="saveField(row.item, 'cable')">重试</button></div></template></td>
+            <td class="confirm-cell"><a-checkbox v-if="row.item" v-model:checked="draftFor(row.item).manualConfirmed" :aria-label="`第 ${row.index} 行人工确认`" @click.stop @change="saveField(row.item, 'manualConfirmed')" /></td>
+            <td><template v-if="row.item"><input v-model="draftFor(row.item).tableNote" maxlength="1000" placeholder="填写备注" :aria-label="`第 ${row.index} 行备注`" :class="{ 'save-error': errors[fieldKey(row.item, 'tableNote')] }" @click.stop @blur="saveField(row.item, 'tableNote')" @keydown.enter.prevent="($event.target as HTMLInputElement).blur()" /><button v-if="errors[fieldKey(row.item, 'tableNote')]" class="retry-save" @click.stop="saveField(row.item, 'tableNote')">重试</button></template></td>
+          </tr>
+        </tbody>
+        <tbody v-else>
           <tr v-for="(item, index) in displayedItems" :key="item.id" :class="{ selected: selectedId === item.id }" :data-result-id="item.id" @click="emit('select', item.id)">
             <td class="table-index"><a-checkbox :checked="selectedIds.includes(item.id)" :aria-label="`选择第 ${index + 1} 条结果`" @click.stop @update:checked="toggleSelected(item.id, $event)" /> {{ String(index + 1).padStart(2, '0') }}</td>
             <td><input v-model="draftFor(item).terminalNumber" maxlength="500" placeholder="填写端子号" :aria-label="`第 ${index + 1} 行端子号`" :class="{ 'save-error': errors[fieldKey(item, 'terminalNumber')] }" @click.stop @blur="saveField(item, 'terminalNumber')" @keydown.enter.prevent="($event.target as HTMLInputElement).blur()" /><button v-if="errors[fieldKey(item, 'terminalNumber')]" class="retry-save" :title="errors[fieldKey(item, 'terminalNumber')]" @click.stop="saveField(item, 'terminalNumber')">重试</button></td>
@@ -280,7 +298,7 @@ watch(() => props.page.no, () => { selectedIds.value = []; coordinateSorted.valu
           </tr>
         </tbody>
       </table>
-      <a-empty v-if="!displayedItems.length" description="没有匹配的识别结果" />
+      <a-empty v-if="hasTerminalResult ? !terminalRows.length : !displayedItems.length" description="没有匹配的识别结果" />
     </div>
     <footer class="results-footer">
       <button v-if="canUndoReview" class="footer-undo-btn" @click="emit('undo')"><UndoOutlined /> 撤销上一次结果操作</button>

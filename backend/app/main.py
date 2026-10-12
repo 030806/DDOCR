@@ -14,6 +14,7 @@ from app.ocr.adapter import OcrAdapter
 from app.ocr.contracts import OcrAdapterProtocol
 from app.ocr.engine import TerminalOcrEngine
 from app.services.core import MockOcrService
+from app.terminal_pair.client import TerminalPairClient
 from app.utils.common import uid
 from app.workers.ocr_task import OcrTaskWorker
 
@@ -25,6 +26,7 @@ def create_app(
     data_dir: str | None = None,
     database_url: str | None = None,
     ocr_adapter: OcrAdapterProtocol | None = None,
+    terminal_detector: TerminalPairClient | None = None,
 ) -> FastAPI:
     app = FastAPI(
         title="DDOCR Mock Backend",
@@ -44,7 +46,12 @@ def create_app(
     active_adapter = (
         ocr_adapter if ocr_adapter is not None else OcrAdapter(managed_engine)
     )
-    service = MockOcrService(Store(root, configured_database_url), active_adapter)
+    yolox_url = os.getenv("DDOCR_YOLOX_URL", "").strip()
+    active_detector = terminal_detector or (TerminalPairClient(yolox_url) if yolox_url else None)
+    service = MockOcrService(
+        Store(root, configured_database_url), active_adapter,
+        terminal_detector=active_detector,
+    )
     worker = OcrTaskWorker(service)
     service.job_submitter = worker.submit
     app.state.service = service

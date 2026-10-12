@@ -16,6 +16,7 @@ from app.models.store import Store
 from app.ocr.adapter import OcrAdapter
 from app.ocr.contracts import OcrAdapterProtocol
 from app.ocr.engine import TerminalOcrEngine
+from app.terminal_pair.client import TerminalPairClient
 from app.repositories.auth import PasswordResetRepository, SessionRepository, TenantRepository, UserRepository
 from app.repositories.correction_comment import CommentRepository, CorrectionRepository
 from app.repositories.file_job import FileRepository, OCRJobRepository
@@ -28,6 +29,9 @@ from app.schemas.contracts import (
     JobCreate,
     JobRerunCreate,
     RegionJobCreate,
+    RegionJobPageCreate,
+    RegionJobRegionCreate,
+    TerminalPointsUpdate,
     UploadSessionCreate,
 )
 from app.utils.common import now, uid
@@ -41,6 +45,7 @@ class MockOcrService:
         store: Store,
         ocr_adapter: OcrAdapterProtocol | None = None,
         job_submitter: Callable[[str], object] | None = None,
+        terminal_detector: TerminalPairClient | None = None,
     ) -> None:
         self.store = store
         self.ocr_adapter: OcrAdapterProtocol = (
@@ -49,6 +54,7 @@ class MockOcrService:
             else OcrAdapter(TerminalOcrEngine())
         )
         self.job_submitter = job_submitter
+        self.terminal_detector = terminal_detector
         self.tenants = TenantRepository(store.engine)
         self.users = UserRepository(store.engine)
         self.sessions = SessionRepository(store.engine)
@@ -407,13 +413,31 @@ class MockOcrService:
         if active_rerun:
             raise HTTPException(409, "This OCR job is already being recognized again")
 
-        created = self.create_job(JobCreate(
-            name=source["name"],
-            file_id=source["file_id"],
-            model_id=body.model_id,
-            model_version=body.model_version,
-            options={"rerun_source_job_id": source_job_id},
-        ), owner_id)
+        previous_regions = self.region_jobs.context(source_job_id)
+        if previous_regions:
+            created = self.create_region_job(
+                RegionJobCreate(
+                    name=source["name"], file_id=source["file_id"],
+                    model_id=body.model_id, model_version=body.model_version,
+                    pages=[RegionJobPageCreate(
+                        page_no=1,
+                        regions=[
+                            RegionJobRegionCreate(client_id=region["client_id"], bbox=tuple(region["bbox"]))
+                            for region in previous_regions["regions"]
+                        ],
+                    )],
+                ),
+                owner_id,
+                rerun_source_job_id=source_job_id,
+            )
+        else:
+            created = self.create_job(JobCreate(
+                name=source["name"],
+                file_id=source["file_id"],
+                model_id=body.model_id,
+                model_version=body.model_version,
+                options={"rerun_source_job_id": source_job_id},
+            ), owner_id)
         return created
 
     def hide_rerun_source(self, rerun_job_id: str) -> None:
@@ -448,6 +472,7 @@ class MockOcrService:
         self,
         body: RegionJobCreate,
         owner_id: str,
+        rerun_source_job_id: str | None = None,
     ) -> dict[str, Any]:
         if bool(body.file_id) == bool(body.source_job_id):
             raise HTTPException(422, "Exactly one of file_id and source_job_id is required")
@@ -500,7 +525,10 @@ class MockOcrService:
             "created_at": created_at, "started_at": None, "finished_at": None,
             "page_ids": [page_id], "page_count": 1, "completed_pages": 0,
             "failed_pages": 0, "result_count": 0, "review_count": 0,
-            "options": {"recognition_scope": "regions"}, "deleted": False,
+            "options": {
+                "recognition_scope": "regions",
+                **({"rerun_source_job_id": rerun_source_job_id} if rerun_source_job_id else {}),
+            }, "deleted": False,
         }
         self.jobs.create(job)
         self.page_repository.create(self._build_page(
@@ -768,6 +796,46 @@ class MockOcrService:
         except ValueError as exc:
             raise HTTPException(409, {"code": "GEOMETRY_REVISION_CONFLICT", "result_id": str(exc)}) from exc
 
+    def save_terminal_points(
+        self, job_id: str, page_no: int, body: TerminalPointsUpdate, owner_id: str,
+    ) -> dict[str, Any]:
+        job = self.job(job_id, owner_id)
+        page = None
+        for page_id in job["page_ids"]:
+            candidate = self.page(page_id)
+            if candidate and candidate["page_no"] == page_no:
+                page = candidate
+                break
+        if page is None:
+            raise HTTPException(404, "Page not found")
+        if page["terminal_points"] is None:
+            raise HTTPException(409, "Terminal detection is unavailable")
+        width, height = page["image"]["width_px"], page["image"]["height_px"]
+        existing = {point["id"]: point for point in page["terminal_points"]}
+        seen: set[str] = set()
+        normalized = []
+        for point in body.points:
+            if point.id in seen:
+                raise HTTPException(422, "Duplicate terminal point ID")
+            seen.add(point.id)
+            if not all(math.isfinite(value) for value in (point.x, point.y)):
+                raise HTTPException(422, "Terminal point coordinates must be finite")
+            if not (0 <= point.x <= width and 0 <= point.y <= height):
+                raise HTTPException(422, "Terminal point must be inside the source image")
+            if point.id in existing:
+                normalized.append({**existing[point.id], "x": point.x, "y": point.y})
+            else:
+                normalized.append({"id": uid(), "x": point.x, "y": point.y, "source": "manual"})
+        normalized.sort(key=lambda point: (point["y"], point["x"]))
+        updated = self.page_repository.replace_terminal_points(page["id"], body.base_revision, normalized)
+        if updated is None:
+            raise HTTPException(409, {"code": "TERMINAL_REVISION_CONFLICT"})
+        return {
+            "points": updated["terminal_points"],
+            "count": len(updated["terminal_points"]),
+            "revision": updated["terminal_revision"],
+        }
+
     def add_correction(
         self,
         result_id: str,
@@ -874,6 +942,31 @@ class MockOcrService:
                 "comments",
             ])
         self._append_export_rows(worksheet, job, body.mode)
+        terminal_pages = [
+            page for page_id in job["page_ids"]
+            if (page := self.page_repository.get(page_id)) is not None
+            and page["terminal_points"] is not None
+        ]
+        if terminal_pages:
+            pair_sheet = workbook.create_sheet("端子对照表")
+            pair_sheet.append(["页码", "端子号", "线号"])
+            for page in terminal_pages:
+                line_results = [
+                    self.public_result(self.result(result_id))
+                    for result_id in page["result_ids"]
+                ]
+                line_results = sorted(
+                    (item for item in line_results
+                     if item.get("review_status") not in {"deleted", "false_positive"}),
+                    key=lambda item: (item["bbox"][1], item["bbox"][0]),
+                )
+                count = max(len(page["terminal_points"]), len(line_results))
+                for index in range(count):
+                    pair_sheet.append([
+                        page["page_no"],
+                        str(index + 1) if index < len(page["terminal_points"]) else "",
+                        line_results[index]["display_text"] if index < len(line_results) else "",
+                    ])
         workbook.save(export_path)
 
         export = {

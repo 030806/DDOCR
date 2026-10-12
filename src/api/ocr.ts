@@ -1,4 +1,4 @@
-import type { ModelOption, OcrItem, OcrPage, OcrPolygon, OcrReviewStatus } from '../types/ocr'
+import type { ModelOption, OcrItem, OcrPage, OcrPolygon, OcrReviewStatus, TerminalPoint } from '../types/ocr'
 import type { OcrJobStatus, OcrTask, TaskStatus } from '../types/task'
 import type { ExportMode } from '../exportResults'
 import { apiClient } from './client'
@@ -36,6 +36,10 @@ type ApiPage = {
     width_px: number
     height_px: number
   }
+  terminal_model_points?: TerminalPoint[] | null
+  terminal_points?: TerminalPoint[] | null
+  terminal_error?: { code: string; message: string } | null
+  terminal_revision?: number
 }
 
 type ApiComment = {
@@ -234,6 +238,18 @@ export async function saveResultEdits(taskId: string, pageNo: number, payload: R
   return response.data.data
 }
 
+export async function saveTerminalPoints(
+  taskId: string, pageNo: number, points: TerminalPoint[], baseRevision: number,
+) {
+  const response = await apiClient.put<ApiEnvelope<{
+    points: TerminalPoint[]; count: number; revision: number
+  }>>(`/ocr/jobs/${taskId}/pages/${pageNo}/terminal-points`, {
+    base_revision: baseRevision,
+    points: points.map(point => ({ id: point.id, x: point.x, y: point.y })),
+  })
+  return response.data.data
+}
+
 function mapApiComment(comment: ApiComment): OcrItem['comments'][number] {
   return {
     id: comment.id,
@@ -350,6 +366,12 @@ export async function getOcrPages(taskId: string): Promise<OcrPage[]> {
         imageUrl,
         sourceWidth: page.image.width_px,
         sourceHeight: page.image.height_px,
+        ...(page.terminal_points !== undefined ? {
+          terminalPoints: page.terminal_points,
+          terminalModelCount: page.terminal_model_points?.length ?? null,
+          terminalError: page.terminal_error,
+          terminalRevision: page.terminal_revision ?? 0,
+        } : {}),
       }
     }),
   )

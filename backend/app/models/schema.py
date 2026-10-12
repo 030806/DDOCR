@@ -335,6 +335,10 @@ pages = Table(
     Column("review_count", Integer, nullable=False, server_default="0"),
     Column("processing_ms", Integer),
     Column("error", JSON_VALUE),
+    Column("terminal_model_points", JSON_VALUE),
+    Column("terminal_points", JSON_VALUE),
+    Column("terminal_error", JSON_VALUE),
+    Column("terminal_revision", Integer, nullable=False, server_default="0"),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     UniqueConstraint("job_id", "page_no", name="uq_pages_job_page_no"),
 )

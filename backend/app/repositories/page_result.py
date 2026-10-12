@@ -17,6 +17,10 @@ def _page_dict(row: Any) -> dict[str, Any]:
         "result_ids": list(m["result_ids"] or []), "result_count": m["result_count"],
         "review_count": m["review_count"], "processing_ms": m["processing_ms"],
         "error": m["error"],
+        "terminal_model_points": m["terminal_model_points"],
+        "terminal_points": m["terminal_points"],
+        "terminal_error": m["terminal_error"],
+        "terminal_revision": m["terminal_revision"],
     }
 
 
@@ -53,7 +57,8 @@ class PageRepository:
             return _page_dict(row) if row else None
 
     def update_state(self, page_id: str, **values: Any) -> dict[str, Any]:
-        permitted = {"status", "result_ids", "result_count", "review_count", "processing_ms", "error"}
+        permitted = {"status", "result_ids", "result_count", "review_count", "processing_ms", "error",
+                     "terminal_model_points", "terminal_points", "terminal_error"}
         with Session(self.engine) as db, db.begin():
             db.execute(update(pages).where(pages.c.id == page_id).values(
                 **{key: value for key, value in values.items() if key in permitted}
@@ -62,6 +67,25 @@ class PageRepository:
         if item is None:
             raise KeyError(f"OCR page not found: {page_id}")
         return item
+
+    def replace_terminal_points(
+        self, page_id: str, base_revision: int, points: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        with Session(self.engine) as db, db.begin():
+            updated = db.execute(
+                update(pages).where(
+                    pages.c.id == page_id,
+                    pages.c.terminal_revision == base_revision,
+                    pages.c.terminal_points.is_not(None),
+                ).values(terminal_points=points, terminal_revision=base_revision + 1)
+            )
+            if not updated.rowcount:
+                return None
+            job_id = db.scalar(select(pages.c.job_id).where(pages.c.id == page_id))
+            db.execute(update(ocr_jobs).where(ocr_jobs.c.id == job_id).values(
+                result_version=ocr_jobs.c.result_version + 1
+            ))
+        return self.get(page_id)
 
 
 class OCRResultRepository:
@@ -203,6 +227,7 @@ class OCRResultRepository:
         processing_ms: int,
         page_error: dict[str, Any] | None,
         finished_at: Any,
+        terminal_result: dict[str, Any] | None = None,
     ) -> None:
         """Atomically replace results and finalize their page and job."""
         result_ids = [item["id"] for item in items]
@@ -223,6 +248,7 @@ class OCRResultRepository:
             db.execute(update(pages).where(pages.c.id == page_id).values(
                 status=status, result_ids=result_ids, result_count=len(items),
                 review_count=review_count, processing_ms=processing_ms, error=page_error,
+                **(terminal_result or {}),
             ))
             db.execute(update(ocr_jobs).where(ocr_jobs.c.id == job_id).values(
                 status=status, stage="completed", progress=100,

@@ -35,6 +35,14 @@ export type OcrItem = {
 
 export type OcrReviewStatus = 'unreviewed' | 'confirmed' | 'false_positive' | 'deleted'
 
+export type TerminalPoint = {
+  id: string
+  x: number
+  y: number
+  source: 'model' | 'manual'
+  score?: number
+}
+
 export type OcrPage = {
   no: number
   label: string
@@ -42,6 +50,10 @@ export type OcrPage = {
   imageUrl?: string
   sourceWidth?: number
   sourceHeight?: number
+  terminalPoints?: TerminalPoint[] | null
+  terminalModelCount?: number | null
+  terminalError?: { code: string; message: string } | null
+  terminalRevision?: number
 }
 
 export type ModelOption = {

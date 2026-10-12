@@ -1,5 +1,6 @@
-import type { OcrItem } from './types/ocr'
+import type { OcrItem, TerminalPoint } from './types/ocr'
 import { exportableOcrItems } from './resultVisibility'
+import { terminalTableRows } from './terminalPairTable'
 
 export type ExportMode = 'simple' | 'full'
 
@@ -53,7 +54,7 @@ function formatDate(date: Date) {
   return `${year}${month}${day}`
 }
 
-export async function exportOcrResults(items: OcrItem[], mode: ExportMode, pageNo: number) {
+export async function exportOcrResults(items: OcrItem[], mode: ExportMode, pageNo: number, terminalPoints?: TerminalPoint[] | null) {
   const XLSX = await import('xlsx')
   const rows = mode === 'simple' ? createSimpleExportRows(items) : createFullExportRows(items)
   const worksheet = XLSX.utils.json_to_sheet(rows)
@@ -63,6 +64,15 @@ export async function exportOcrResults(items: OcrItem[], mode: ExportMode, pageN
 
   const workbook = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(workbook, worksheet, mode === 'simple' ? '精简结果' : '完整结果')
+  if (terminalPoints) {
+    const pairRows = terminalTableRows(terminalPoints, items).map(row => ({
+      端子号: row.terminalNumber,
+      线号: row.item?.corrected || row.item?.text || '',
+    }))
+    const pairSheet = XLSX.utils.json_to_sheet(pairRows, { header: ['端子号', '线号'] })
+    pairSheet['!cols'] = [{ wch: 12 }, { wch: 40 }]
+    XLSX.utils.book_append_sheet(workbook, pairSheet, '端子对照表')
+  }
   const modeLabel = mode === 'simple' ? '精简' : '完整'
   XLSX.writeFile(workbook, `OCR结果_第${pageNo}页_${modeLabel}_${formatDate(new Date())}.xlsx`)
 }

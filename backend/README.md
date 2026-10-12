@@ -1,5 +1,7 @@
 # DDOCR Backend
 
+YOLOX 端子对检测的模型文件、同机推理进程启动、环境变量和上线核查步骤见 [YOLOX 端子对接入部署说明](../docs/14_YOLOX_端子对接入部署说明.md)。正式数据库需执行 `python -m alembic upgrade head`。
+
 左右侧端子排任务新增迁移 `f280_terminal_tasks`，部署时执行 `python -m alembic upgrade head`。
 端子排任务软删除新增迁移 `c83e4a610b7d`，生产环境也需执行 `python -m alembic upgrade head`；删除任务不会删除来源 OCR 任务和上传文件。
 任务关联、合并复核、六列导出接口及操作说明见 [端子排左右侧任务](../docs/12_Terminal_Side_Tasks.md)。

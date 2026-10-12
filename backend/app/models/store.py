@@ -45,6 +45,17 @@ class Store:
             if "result_version" not in {column["name"] for column in inspector.get_columns("ocr_jobs")}:
                 with self.engine.begin() as connection:
                     connection.execute(text("ALTER TABLE ocr_jobs ADD COLUMN result_version INTEGER NOT NULL DEFAULT 0"))
+        if "pages" in inspector.get_table_names():
+            page_columns = {column["name"] for column in inspector.get_columns("pages")}
+            for name, definition in (
+                ("terminal_model_points", "JSON"),
+                ("terminal_points", "JSON"),
+                ("terminal_error", "JSON"),
+                ("terminal_revision", "INTEGER NOT NULL DEFAULT 0"),
+            ):
+                if name not in page_columns:
+                    with self.engine.begin() as connection:
+                        connection.execute(text(f"ALTER TABLE pages ADD COLUMN {name} {definition}"))
         if "results" not in inspector.get_table_names():
             return
         result_columns = {column["name"] for column in inspector.get_columns("results")}

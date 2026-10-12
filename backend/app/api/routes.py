@@ -21,6 +21,7 @@ from app.schemas.contracts import (
     ResultReviewStatusUpdate,
     ResultTableUpdate,
     ResultEditsCreate,
+    TerminalPointsUpdate,
     UploadSessionCreate,
 )
 from app.services.core import MockOcrService
@@ -422,6 +423,15 @@ def save_result_edits(
 ) -> dict[str, Any]:
     actor = authenticated_user(request, authorization)
     return envelope(service(request).save_result_edits(job_id, page_no, body, actor["id"]))
+
+
+@router.put("/ocr/jobs/{job_id}/pages/{page_no}/terminal-points")
+def save_terminal_points(
+    job_id: str, page_no: int, body: TerminalPointsUpdate, request: Request,
+    authorization: Annotated[str | None, Header()] = None,
+) -> dict[str, Any]:
+    actor = authenticated_user(request, authorization)
+    return envelope(service(request).save_terminal_points(job_id, page_no, body, actor["id"]))
 
 
 @router.post("/ocr/results/{result_id}/corrections", status_code=201)
