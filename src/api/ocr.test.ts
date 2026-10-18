@@ -257,6 +257,21 @@ describe('OCR API adapters', () => {
     })
   })
 
+  it('restores saved terminal points and revisions when reopening a task', async () => {
+    const points = [{ id: 'manual-1', x: 80, y: 120, source: 'manual' }]
+    vi.spyOn(apiClient, 'get')
+      .mockResolvedValueOnce({ data: { data: { items: [{
+        page_no: 1, label: '第 1 页', image: { url: null, width_px: 1200, height_px: 1600 },
+        terminal_points: points, terminal_model_points: [points[0], points[0]],
+        terminal_error: null, terminal_revision: 3,
+      }] } } } as never)
+      .mockResolvedValueOnce({ data: { data: { items: [] } } } as never)
+    const pages = await getOcrPages('saved-job')
+    expect(pages[0]).toMatchObject({
+      terminalPoints: points, terminalModelCount: 2, terminalError: null, terminalRevision: 3,
+    })
+  })
+
   it('creates, updates, and deletes comments with the server author', async () => {
     const serverComment = {
       id: 'comment-1', content: '请复核',
