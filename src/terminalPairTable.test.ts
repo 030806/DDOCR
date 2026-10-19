@@ -8,6 +8,19 @@ const line = (id: string, y: number, reviewStatus?: OcrItem['reviewStatus']): Oc
 const point = (id: string, y: number): TerminalPoint => ({ id, x: 20, y, source: 'model' })
 
 describe('terminal-pair table rows', () => {
+  it('marks surplus OCR lines independently of displayed numbers and blank terminal rows', () => {
+    const rows = terminalTableRows([point('p', 1)], [{ ...line('a', 1), terminalNumber: '101' }, line('b', 2)])
+    expect(rows[0]).toMatchObject({ hasTerminal: true, hasOcrResult: true, requiresTerminalReview: false, terminalNumber: '101' })
+    expect(rows[1]).toMatchObject({ hasTerminal: false, hasOcrResult: true, requiresTerminalReview: true })
+    expect(terminalTableRows([point('p', 1)], [])[0]).toMatchObject({ hasTerminal: true, hasOcrResult: false, requiresTerminalReview: false })
+  })
+  it('uses saved terminal numbers for OCR rows and generated numbers for unmatched terminals', () => {
+    const custom = { ...line('H1', 10), terminalNumber: 'XT-001' }
+    expect(terminalTableRows([point('a', 10), point('b', 20)], [custom]).map(row => row.terminalNumber)).toEqual(['XT-001', '2'])
+    expect(terminalTableRows([], [custom])[0]!.terminalNumber).toBe('XT-001')
+    custom.terminalNumber = ''
+    expect(terminalTableRows([point('a', 10)], [custom])[0]!.terminalNumber).toBe('1')
+  })
   it('keeps blank line cells when the detector finds more terminals', () => {
     const rows = terminalTableRows([point('b', 200), point('a', 100), point('c', 300)], [line('H1', 10)])
     expect(rows.map(row => [row.terminalNumber, row.item?.text || ''])).toEqual([

@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { CommentOutlined, DeleteOutlined, EditOutlined, UndoOutlined, WarningOutlined } from '@ant-design/icons-vue'
-import { Modal } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import type { OcrItem, OcrPage, OcrReviewStatus } from '../types/ocr'
 import type { ExportMode } from '../exportResults'
 import { filterOcrItems } from '../resultVisibility'
 import { sortOcrItemsByCoordinates } from '../ocrResultOrder'
 import { terminalNumberFillValues } from '../terminalNumberFill'
+import { createGridEditing, type GridChange } from '../ocrGridEditing'
 import { terminalTableRows } from '../terminalPairTable'
+
+const OcrResultGrid = defineAsyncComponent(() => import('./OcrResultGrid.vue'))
 
 const props = defineProps<{
   page: OcrPage
@@ -20,6 +23,7 @@ const props = defineProps<{
   datasetReviewed?: boolean
   datasetReviewSaving?: boolean
   datasetReviewDisabled?: boolean
+  editingDisabled?: boolean
   saveTable: (item: OcrItem, values: { terminalNumber: string; manualConfirmed: boolean; tableNote: string }) => Promise<void>
   saveCable: (item: OcrItem, text: string) => Promise<void>
 }>()
@@ -43,86 +47,18 @@ const showDeleted = ref(false)
 const selectedIds = ref<string[]>([])
 const coordinateSorted = ref(false)
 const viewMode = ref<'list' | 'table'>('list')
-type RowDraft = { terminalNumber: string; cable: string; manualConfirmed: boolean; tableNote: string }
-const drafts = reactive<Record<string, RowDraft>>({})
-const saving = reactive<Record<string, boolean>>({})
-const errors = reactive<Record<string, string>>({})
-const rowSaves = new Map<string, Promise<void>>()
+const editing = createGridEditing(() => props.page.items, props.saveTable, props.saveCable, change => {
+  if (props.editingDisabled) throw new Error('请先保存或退出端子点编辑，再修改表格')
+  if (change.field === 'terminalNumber' && hasTerminalResult.value && !terminalRows.value.some(row => row.item?.id === change.id && row.hasTerminal)) {
+    throw new Error('该线号超出当前端子数量，请核对原图；确有漏检时，先补充并保存端子点')
+  }
+})
+function applyHistory(redo = false) { try { editing.history(redo) } catch (error) { message.warning((error as Error).message) } }
 const terminalNumberFilling = ref(false)
-function draftFor(item: OcrItem): RowDraft {
-  return drafts[item.id] ||= {
-    terminalNumber: item.terminalNumber || '', cable: item.corrected || item.text,
-    manualConfirmed: item.manualConfirmed || false, tableNote: item.tableNote || '',
-  }
-}
-function fieldKey(item: OcrItem, field: keyof RowDraft) { return `${item.id}:${field}` }
-async function saveField(item: OcrItem, field: keyof RowDraft) {
-  const key = fieldKey(item, field)
-  if (saving[key]) return
-  saving[key] = true
-  const previous = rowSaves.get(item.id)
-  if (previous) await previous
-  const submittedValue = draftFor(item)[field]
-  const operation = persistField(item, field, key)
-  rowSaves.set(item.id, operation)
-  try { await operation } finally {
-    if (rowSaves.get(item.id) === operation) rowSaves.delete(item.id)
-    saving[key] = false
-    const draft = draftFor(item)
-    const current = field === 'cable' ? item.corrected || item.text : field === 'terminalNumber' ? item.terminalNumber || '' : field === 'tableNote' ? item.tableNote || '' : item.manualConfirmed || false
-    if (!errors[key] && draft[field] !== submittedValue && draft[field] !== current) void saveField(item, field)
-  }
-}
-async function persistField(item: OcrItem, field: keyof RowDraft, key: string) {
-  const draft = draftFor(item)
-  const value = draft[field]
-  const original = field === 'cable' ? item.corrected || item.text :
-    field === 'terminalNumber' ? item.terminalNumber || '' :
-    field === 'tableNote' ? item.tableNote || '' : item.manualConfirmed || false
-  if (value === original) { delete errors[key]; return }
-  if (field === 'cable' && !String(value).trim()) { errors[key] = '线缆编号不能为空'; return }
-  delete errors[key]
-  try {
-    if (field === 'cable') await props.saveCable(item, String(value).trim())
-    else await props.saveTable(item, {
-      terminalNumber: draft.terminalNumber.trim(), manualConfirmed: draft.manualConfirmed,
-      tableNote: draft.tableNote.trim(),
-    })
-    if (draft[field] === value) {
-      if (field === 'cable') draft.cable = item.corrected || item.text
-      else if (field === 'terminalNumber') draft.terminalNumber = item.terminalNumber || ''
-      else if (field === 'tableNote') draft.tableNote = item.tableNote || ''
-    }
-  } catch {
-    errors[key] = '保存失败，点击重试'
-  }
-}
-function hasPendingEdits() {
-  return Object.values(saving).some(Boolean) || Object.values(errors).some(Boolean)
-    || props.page.items.some(item => {
-      const draft = drafts[item.id]
-      return draft && (draft.cable !== (item.corrected || item.text)
-        || draft.terminalNumber !== (item.terminalNumber || '')
-        || draft.manualConfirmed !== (item.manualConfirmed || false)
-        || draft.tableNote !== (item.tableNote || ''))
-    })
-}
-function syncCorrection(resultId: string, correctedText: string) {
-  const draft = drafts[resultId]
-  if (draft) draft.cable = correctedText
-  delete errors[`${resultId}:cable`]
-}
-async function flushPendingEdits() {
-  await Promise.all([...rowSaves.values()])
-  for (const item of props.page.items) {
-    if (!drafts[item.id]) continue
-    for (const field of ['terminalNumber', 'cable', 'manualConfirmed', 'tableNote'] as const) {
-      if (!saving[fieldKey(item, field)]) await saveField(item, field)
-    }
-  }
-  await Promise.all([...rowSaves.values()])
-  return !hasPendingEdits()
-}
+const hasPendingEdits = editing.pending
+const flushPendingEdits = editing.flush
+const syncCorrection = editing.syncCorrection
+function applyGridChanges(changes: GridChange[]) { editing.apply(changes) }
 defineExpose({ hasPendingEdits, flushPendingEdits, syncCorrection })
 const filteredItems = computed(() => filterOcrItems(props.page.items, {
   search: search.value,
@@ -138,7 +74,7 @@ const displayedItems = computed(() => coordinateSorted.value
 const hasTerminalResult = computed(() => Array.isArray(props.page.terminalPoints))
 const terminalRows = computed(() => terminalTableRows(props.page.terminalPoints || [], props.page.items))
 const visibleSelectionIds = computed(() => viewMode.value === 'table' && hasTerminalResult.value
-  ? terminalRows.value.map(row => row.selectionId) : displayedItems.value.map(item => item.id))
+  ? terminalRows.value.filter(row => !row.item || displayedItems.value.some(item => item.id === row.item!.id)).map(row => row.selectionId) : displayedItems.value.map(item => item.id))
 const selectedReviewIds = computed(() => props.page.items.filter(item => selectedIds.value.includes(item.id)).map(item => item.id))
 const allVisibleSelected = computed(() => visibleSelectionIds.value.length > 0 && visibleSelectionIds.value.every(id => selectedIds.value.includes(id)))
 function scoreColor(score: number) {
@@ -181,22 +117,17 @@ function reviewSelected(status: OcrReviewStatus) {
 async function fillSelectedTerminalNumbers() {
   if (terminalNumberFilling.value) return
   const values = terminalNumberFillValues(displayedItems.value, selectedIds.value)
-  if (!values.size) return
+  editing.apply([...values].filter(([id]) => !editing.values(id).terminalNumber.trim()).map(([id, value]) => ({ id, field: 'terminalNumber', value })))
   terminalNumberFilling.value = true
-  try {
-    await Promise.all(displayedItems.value.flatMap(item => {
-      const value = values.get(item.id)
-      const draft = draftFor(item)
-      if (!value || draft.terminalNumber.trim()) return []
-      draft.terminalNumber = value
-      return [saveField(item, 'terminalNumber')]
-    }))
-  } finally { terminalNumberFilling.value = false }
+  try { await editing.flush() } finally { terminalNumberFilling.value = false }
 }
+const gridRows = computed(() => hasTerminalResult.value
+  ? terminalRows.value.filter(row => !row.item || displayedItems.value.some(item => item.id === row.item!.id))
+  : displayedItems.value.map(item => ({ selectionId: item.id, terminalNumber: item.terminalNumber || '', item, hasTerminal: true, hasOcrResult: true, requiresTerminalReview: false })))
 
 watch(displayedItems, items => emit('visible-change', items.map(item => item.id)), { immediate: true })
 watch(visibleSelectionIds, ids => { selectedIds.value = selectedIds.value.filter(id => ids.includes(id)) })
-watch(() => props.page.no, () => { selectedIds.value = []; coordinateSorted.value = false; Object.keys(drafts).forEach(key => delete drafts[key]) })
+watch(() => `${props.page.no}:${props.page.items[0]?.id || ''}`, () => { selectedIds.value = []; coordinateSorted.value = false; editing.reset() })
 </script>
 
 <template>
@@ -206,7 +137,7 @@ watch(() => props.page.no, () => { selectedIds.value = []; coordinateSorted.valu
       <div class="result-mode-row" role="group" aria-label="识别结果显示方式">
       <button :class="{ active: viewMode === 'list' }" :aria-pressed="viewMode === 'list'" @click="viewMode = 'list'">列表显示</button>
       <button :class="{ active: viewMode === 'table' }" :aria-pressed="viewMode === 'table'" @click="viewMode = 'table'">表格显示</button>
-      <span v-if="viewMode === 'table'">{{ hasTerminalResult ? '端子号由蓝点数量生成；线号修改后自动保存' : '修改后离开单元格自动保存' }}</span>
+      <span v-if="viewMode === 'table'">修改后离开单元格自动保存</span>
     </div>
       <button class="copy-btn" :disabled="page.items.length < 2" @click="coordinateSorted = true">{{ coordinateSorted ? '已按坐标排序' : '按坐标排序' }}</button>
       <a-dropdown :trigger="['click']">
@@ -276,34 +207,16 @@ watch(() => props.page.no, () => { selectedIds.value = []; coordinateSorted.valu
       </article>
       <a-empty v-if="!displayedItems.length" description="没有匹配的识别结果" />
     </div>
-    <div v-else class="result-table-scroll">
-      <table class="result-table">
-        <thead><tr><th scope="col">序号</th><th scope="col">端子号</th><th scope="col">线缆编号</th><th scope="col">人工确认</th><th scope="col">备注</th></tr></thead>
-        <tbody v-if="hasTerminalResult">
-          <tr v-for="row in terminalRows" :key="row.selectionId" :class="{ selected: selectedIds.includes(row.selectionId) || (row.item && selectedId === row.item.id) }" :data-result-id="row.item?.id" @click="row.item && emit('select', row.item.id)">
-            <td class="table-index"><a-checkbox :checked="selectedIds.includes(row.selectionId)" :aria-label="`选择第 ${row.index} 行`" @click.stop @update:checked="toggleSelected(row.selectionId, $event)" /> {{ String(row.index).padStart(2, '0') }}</td>
-            <td>{{ row.terminalNumber }}</td>
-            <td><template v-if="row.item"><div class="table-cable-cell"><input v-model="draftFor(row.item).cable" maxlength="500" :aria-label="`第 ${row.index} 行线缆编号`" :class="{ 'save-error': errors[fieldKey(row.item, 'cable')] }" @click.stop @blur="saveField(row.item, 'cable')" @keydown.enter.prevent="($event.target as HTMLInputElement).blur()" /><button v-if="errors[fieldKey(row.item, 'cable')]" class="retry-save" @click.stop="saveField(row.item, 'cable')">重试</button></div></template></td>
-            <td class="confirm-cell"><a-checkbox v-if="row.item" v-model:checked="draftFor(row.item).manualConfirmed" :aria-label="`第 ${row.index} 行人工确认`" @click.stop @change="saveField(row.item, 'manualConfirmed')" /></td>
-            <td><template v-if="row.item"><input v-model="draftFor(row.item).tableNote" maxlength="1000" placeholder="填写备注" :aria-label="`第 ${row.index} 行备注`" :class="{ 'save-error': errors[fieldKey(row.item, 'tableNote')] }" @click.stop @blur="saveField(row.item, 'tableNote')" @keydown.enter.prevent="($event.target as HTMLInputElement).blur()" /><button v-if="errors[fieldKey(row.item, 'tableNote')]" class="retry-save" @click.stop="saveField(row.item, 'tableNote')">重试</button></template></td>
-          </tr>
-        </tbody>
-        <tbody v-else>
-          <tr v-for="(item, index) in displayedItems" :key="item.id" :class="{ selected: selectedId === item.id }" :data-result-id="item.id" @click="emit('select', item.id)">
-            <td class="table-index"><a-checkbox :checked="selectedIds.includes(item.id)" :aria-label="`选择第 ${index + 1} 条结果`" @click.stop @update:checked="toggleSelected(item.id, $event)" /> {{ String(index + 1).padStart(2, '0') }}</td>
-            <td><input v-model="draftFor(item).terminalNumber" maxlength="500" placeholder="填写端子号" :aria-label="`第 ${index + 1} 行端子号`" :class="{ 'save-error': errors[fieldKey(item, 'terminalNumber')] }" @click.stop @blur="saveField(item, 'terminalNumber')" @keydown.enter.prevent="($event.target as HTMLInputElement).blur()" /><button v-if="errors[fieldKey(item, 'terminalNumber')]" class="retry-save" :title="errors[fieldKey(item, 'terminalNumber')]" @click.stop="saveField(item, 'terminalNumber')">重试</button></td>
-            <td><div class="table-cable-cell"><input v-model="draftFor(item).cable" maxlength="500" :aria-label="`第 ${index + 1} 行线缆编号`" :class="{ 'save-error': errors[fieldKey(item, 'cable')] }" @click.stop @blur="saveField(item, 'cable')" @keydown.enter.prevent="($event.target as HTMLInputElement).blur()" /><span v-if="item.needsRawTextReview && !item.corrected" class="raw-text-review-tag">待核对原始标记</span><button v-if="errors[fieldKey(item, 'cable')]" class="retry-save" :title="errors[fieldKey(item, 'cable')]" @click.stop="saveField(item, 'cable')">重试</button></div></td>
-            <td class="confirm-cell"><a-checkbox v-model:checked="draftFor(item).manualConfirmed" :aria-label="`第 ${index + 1} 行人工确认`" @click.stop @change="saveField(item, 'manualConfirmed')" /> <span v-if="saving[fieldKey(item, 'manualConfirmed')]">保存中</span><button v-if="errors[fieldKey(item, 'manualConfirmed')]" class="retry-save" @click.stop="saveField(item, 'manualConfirmed')">重试</button></td>
-            <td><input v-model="draftFor(item).tableNote" maxlength="1000" placeholder="填写备注" :aria-label="`第 ${index + 1} 行备注`" :class="{ 'save-error': errors[fieldKey(item, 'tableNote')] }" @click.stop @blur="saveField(item, 'tableNote')" @keydown.enter.prevent="($event.target as HTMLInputElement).blur()" /><button v-if="errors[fieldKey(item, 'tableNote')]" class="retry-save" :title="errors[fieldKey(item, 'tableNote')]" @click.stop="saveField(item, 'tableNote')">重试</button></td>
-          </tr>
-        </tbody>
-      </table>
-      <a-empty v-if="hasTerminalResult ? !terminalRows.length : !displayedItems.length" description="没有匹配的识别结果" />
-    </div>
+    <OcrResultGrid v-else :rows="gridRows" :selected-id="selectedId"
+      :terminal-count="hasTerminalResult ? (page.terminalPoints?.length || 0) : undefined" :model-terminal-count="page.terminalModelCount" :editing-disabled="editingDisabled"
+      :selected-ids="selectedIds" :values="editing.values" :statuses="editing.state.status" :revision="editing.state.revision"
+      :can-undo="!!editing.state.undo.length" :can-redo="!!editing.state.redo.length"
+      @change="applyGridChanges" @select="emit('select', $event)" @selection="selectedIds = $event"
+      @undo="applyHistory()" @redo="applyHistory(true)" @retry="editing.retry($event)" />
     <footer class="results-footer">
       <button v-if="canUndoReview" class="footer-undo-btn" @click="emit('undo')"><UndoOutlined /> 撤销上一次结果操作</button>
       <span class="dataset-review-hint">确认当前任务的文字和标注框已全部复核</span>
-      <a-button type="primary" :loading="datasetReviewSaving" :disabled="datasetReviewed || datasetReviewDisabled" @click="emit('complete-review')"><span style="color: #fff">{{ datasetReviewed ? '已复核' : '复核完成' }}</span></a-button>
+      <a-button type="primary" :loading="datasetReviewSaving" :disabled="datasetReviewed || datasetReviewDisabled || hasPendingEdits()" @click="emit('complete-review')"><span style="color: #fff">{{ datasetReviewed ? '已复核' : '复核完成' }}</span></a-button>
     </footer>
   </aside>
 </template>

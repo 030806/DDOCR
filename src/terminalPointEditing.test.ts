@@ -1,5 +1,31 @@
-import { describe, expect, it } from 'vitest'
-import { terminalPointFromPointer } from './terminalPointEditing'
+import { describe, expect, it, vi } from 'vitest'
+import { saveWithTerminalPointConfirmation, terminalPointChanges, terminalPointConfirmationText, terminalPointFromPointer } from './terminalPointEditing'
+import type { TerminalPoint } from './types/ocr'
+
+describe('terminal point save confirmation', () => {
+  const point = (id: string): TerminalPoint => ({ id, x: 1, y: 2, source: 'manual' })
+  it('counts additions and deletions including replacements with unchanged totals', () => {
+    expect(terminalPointChanges([point('a'), point('b')], [point('a'), point('c')])).toEqual({ before: 2, after: 2, added: 1, deleted: 1, requiresConfirmation: true })
+    expect(terminalPointConfirmationText([point('a')], [point('a'), point('b')])).toContain('从 1 变为 2')
+  })
+  it('does not save if the user returns to inspect added or deleted points', async () => {
+    const persist = vi.fn(async () => {})
+    const confirm = vi.fn(async () => false)
+    expect(await saveWithTerminalPointConfirmation([point('a')], [], confirm, persist)).toBe(false)
+    expect(confirm).toHaveBeenCalledOnce(); expect(persist).not.toHaveBeenCalled()
+  })
+  it('saves only after explicit confirmation', async () => {
+    const persist = vi.fn(async () => {})
+    const confirm = vi.fn(async () => { expect(persist).not.toHaveBeenCalled(); return true })
+    expect(await saveWithTerminalPointConfirmation([], [point('a')], confirm, persist)).toBe(true)
+    expect(persist).toHaveBeenCalledOnce()
+  })
+  it('does not ask about counts for coordinate-only moves', async () => {
+    const confirm = vi.fn(async () => false), persist = vi.fn(async () => {})
+    expect(await saveWithTerminalPointConfirmation([point('a')], [{ ...point('a'), y: 100 }], confirm, persist)).toBe(true)
+    expect(confirm).not.toHaveBeenCalled(); expect(persist).toHaveBeenCalledOnce()
+  })
+})
 
 describe('terminal point creation coordinates', () => {
   const transform = { x: 100, y: 30, scale: 0.5, sourceWidth: 1000, sourceHeight: 1400 }

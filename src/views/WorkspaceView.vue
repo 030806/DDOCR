@@ -28,6 +28,7 @@ import { bboxToPolygon, cloneEditableItems, polygonToBbox, type EditableOcrItem 
 import { terminalSidePath, terminalViewPositions } from '../terminalState'
 import { copyRegions } from '../regionSelection'
 import { orderedTerminalPoints } from '../terminalPairTable'
+import { saveWithTerminalPointConfirmation } from '../terminalPointEditing'
 import { applyCorrectionToItems } from '../correctionState'
 
 const emit = defineEmits<{ completed: [jobId: string, pageCount: number] }>()
@@ -376,6 +377,7 @@ function cancelTerminalEdit() {
 }
 
 function toggleTerminalEdit() {
+  if (!terminalEditMode.value && resultPanel.value?.hasPendingEdits()) { message.warning('请先保存表格修改或处理保存失败，再编辑端子点'); return }
   if (bboxEditMode.value) { message.warning('请先退出检测框编辑'); return }
   if (terminalEditMode.value) {
     if (terminalDirty.value) {
@@ -421,14 +423,20 @@ async function saveTerminalEdits() {
   if (terminalSaving.value || !terminalEditMode.value || !page.value || typeof taskId !== 'string') return
   terminalSaving.value = true
   try {
-    const saved = await saveTerminalPoints(
-      taskId, page.value.no, terminalDraftPoints.value, page.value.terminalRevision || 0,
-    )
-    page.value.terminalPoints = saved.points
-    page.value.terminalRevision = saved.revision
-    invalidateDatasetReview()
-    cancelTerminalEdit()
-    message.success('端子点修改已保存')
+    const targetPage = page.value
+    const points = terminalDraftPoints.value.map(point => ({ ...point }))
+    await saveWithTerminalPointConfirmation(targetPage.terminalPoints || [], points,
+      text => new Promise<boolean>(resolve => Modal.confirm({
+        title: '确认端子点数量变化', content: text, okText: '确认保存', cancelText: '返回检查',
+        maskClosable: false, onOk: () => { resolve(true) }, onCancel: () => { resolve(false) },
+      })), async () => {
+        const saved = await saveTerminalPoints(taskId, targetPage.no, points, targetPage.terminalRevision || 0)
+        targetPage.terminalPoints = saved.points
+        targetPage.terminalRevision = saved.revision
+        invalidateDatasetReview()
+        cancelTerminalEdit()
+        message.success('端子点修改已保存')
+      })
   } catch (error) {
     message.error(isAxiosError(error) && error.response?.status === 409
       ? '端子点已被其他用户修改，请刷新后重试' : '端子点保存失败')
@@ -745,6 +753,9 @@ async function saveTableCell(item: OcrItem, values: { terminalNumber: string; ma
     const details = isAxiosError(error) ? error.response?.data?.error?.details : undefined
     if (isAxiosError(error) && error.response?.status === 409 && details) {
       item.tableRevision = details.current_revision
+      item.terminalNumber = details.terminal_number
+      item.manualConfirmed = details.manual_confirmed
+      item.tableNote = details.table_note
       message.warning('该结果已被其他用户修改，请核对输入后重试')
     }
     throw error
@@ -876,7 +887,7 @@ async function handleExport(mode: ExportMode) {
         </div>
       </Pane>
       <Pane :size="splitLayout.resultSizePercent" :min-size="splitLayout.resultMinPercent">
-        <OCRResultPanel v-if="resultPanelPage" ref="resultPanel" :save-table="saveTableCell" :save-cable="saveCableCell" :page="resultPanelPage" :pages="pages" :selected-id="selectedId" :model-label="currentModel?.label || selectedModel" :low-confidence-threshold="settings.lowConfidenceThreshold" :show-confidence="settings.showConfidence" :can-undo-review="Boolean(lastReviewAction)" :dataset-reviewed="Boolean(datasetReviewed)" :dataset-review-saving="datasetReviewSaving" :dataset-review-disabled="jobState !== 'done' || taskLoading || reviewSaving || resultMutationSaving || bboxSaving || terminalSaving || terminalDirty || correctionOpen || manualTextOpen || Boolean(pendingGeometrySnapshot)" @complete-review="finishDatasetReview" @select="selectItem" @correct="openCorrection" @comment="openComment" @export="handleExport" @review="reviewResults" @visible-change="visibleResultIds = $event" @undo="undoReviewAction" />
+        <OCRResultPanel v-if="resultPanelPage" ref="resultPanel" :save-table="saveTableCell" :save-cable="saveCableCell" :editing-disabled="terminalEditMode" :page="resultPanelPage" :pages="pages" :selected-id="selectedId" :model-label="currentModel?.label || selectedModel" :low-confidence-threshold="settings.lowConfidenceThreshold" :show-confidence="settings.showConfidence" :can-undo-review="Boolean(lastReviewAction)" :dataset-reviewed="Boolean(datasetReviewed)" :dataset-review-saving="datasetReviewSaving" :dataset-review-disabled="jobState !== 'done' || taskLoading || reviewSaving || resultMutationSaving || bboxSaving || terminalSaving || terminalDirty || correctionOpen || manualTextOpen || Boolean(pendingGeometrySnapshot)" @complete-review="finishDatasetReview" @select="selectItem" @correct="openCorrection" @comment="openComment" @export="handleExport" @review="reviewResults" @visible-change="visibleResultIds = $event" @undo="undoReviewAction" />
       </Pane>
     </Splitpanes>
     <div v-else class="workspace-empty">

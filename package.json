@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:grid": "playwright test --config playwright.grid.config.ts"
   },
   "dependencies": {
     "@ant-design/icons-vue": "^7.0.1",
@@ -14,12 +15,15 @@
     "axios": "^1.18.1",
     "konva": "^9.3.18",
     "splitpanes": "^4.1.2",
+    "tabulator-tables": "^6.3.1",
     "vue": "^3.5.13",
     "vue-konva": "^3.2.4",
     "vue-router": "^4.6.4",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/tabulator-tables": "^6.3.6",
     "@vitejs/plugin-vue": "^5.2.1",
     "@vue/tsconfig": "^0.7.0",
     "typescript": "~5.7.2",
