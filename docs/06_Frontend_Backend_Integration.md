@@ -106,7 +106,7 @@ SQLite 的 `user` 与 `session` 记录。
 
 ## 忘记密码联调
 
-登录页点击“忘记密码？”，先提交联系电话和员工编号至 `POST /api/v1/auth/forgot-password`，再将 6 位验证码和新密码提交至 `POST /api/v1/auth/reset-password`。本地可在 `backend/.env` 设置 `DDOCR_EXPOSE_PASSWORD_RESET_CODE=true`，页面会显示开发验证码。重置成功后返回登录状态，旧密码和重置前签发的 Bearer Token 均失效。生产环境不得暴露开发验证码，需替换为短信发送流程。
+登录页点击“忘记密码？”，只提交联系电话至 `POST /api/v1/auth/forgot-password`，再将 6 位验证码和新密码提交至 `POST /api/v1/auth/reset-password`。目前没有短信发送服务；演示环境可在 `backend/.env` 设置 `DDOCR_EXPOSE_PASSWORD_RESET_CODE=true`，页面会直接显示验证码，不增加“演示”提示字样。关闭该配置时页面不会假称短信已发送。重置成功后返回登录状态，旧密码和重置前签发的 Bearer Token 均失效。
 
 ## 任务记录导出
 

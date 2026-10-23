@@ -175,6 +175,62 @@ def test_region_job_can_derive_from_completed_job_without_changing_it(tmp_path: 
     assert source_after == source_before
 
 
+def test_illumination_is_saved_for_region_job_and_inherited_on_rerun(tmp_path: Path) -> None:
+    test_client = client(tmp_path)
+    headers = register_headers(test_client)
+    file_id = upload_image(test_client, headers)
+    response = test_client.post(
+        "/api/v1/ocr/region-jobs", headers=headers,
+        json={
+            "name": "HE 选区", "file_id": file_id,
+            "model_id": "mock", "model_version": "1.0.0", "illumination": "he",
+            "pages": [{"page_no": 1, "regions": [
+                {"client_id": "roi-1", "bbox": [100, 120, 400, 300]},
+            ]}],
+        },
+    )
+    assert response.status_code == 202
+    source_id = response.json()["data"]["id"]
+    wait_for_job(test_client, source_id, headers)
+    source = test_client.get(f"/api/v1/ocr/jobs/{source_id}", headers=headers).json()["data"]
+    assert source["options"]["illumination"] == "he"
+
+    rerun = test_client.post(
+        f"/api/v1/ocr/jobs/{source_id}/rerun", headers=headers,
+        json={"model_id": "mock", "model_version": "1.0.0"},
+    )
+    assert rerun.status_code == 202
+    rerun_id = rerun.json()["data"]["id"]
+    wait_for_job(test_client, rerun_id, headers)
+    rerun_job = test_client.get(f"/api/v1/ocr/jobs/{rerun_id}", headers=headers).json()["data"]
+    assert rerun_job["options"]["illumination"] == "he"
+    source_context = test_client.get(
+        f"/api/v1/ocr/region-jobs/{source_id}/context", headers=headers,
+    ).json()["data"]
+    rerun_context = test_client.get(
+        f"/api/v1/ocr/region-jobs/{rerun_id}/context", headers=headers,
+    ).json()["data"]
+    assert [region["bbox"] for region in rerun_context["regions"]] == [
+        region["bbox"] for region in source_context["regions"]
+    ]
+
+    overridden = test_client.post(
+        f"/api/v1/ocr/jobs/{rerun_id}/rerun", headers=headers,
+        json={"model_id": "mock", "model_version": "1.0.0", "illumination": "clahe"},
+    )
+    assert overridden.status_code == 202
+    override_id = overridden.json()["data"]["id"]
+    wait_for_job(test_client, override_id, headers)
+    override_job = test_client.get(f"/api/v1/ocr/jobs/{override_id}", headers=headers).json()["data"]
+    assert override_job["options"]["illumination"] == "clahe"
+    override_context = test_client.get(
+        f"/api/v1/ocr/region-jobs/{override_id}/context", headers=headers,
+    ).json()["data"]
+    assert [region["bbox"] for region in override_context["regions"]] == [
+        region["bbox"] for region in source_context["regions"]
+    ]
+
+
 def test_region_job_rejects_invalid_source_and_bbox(tmp_path: Path) -> None:
     test_client = client(tmp_path)
     headers = register_headers(test_client)
@@ -295,7 +351,7 @@ def test_forgot_password_reset_revokes_sessions(tmp_path: Path, monkeypatch) -> 
 
     requested = test_client.post(
         "/api/v1/auth/forgot-password",
-        json={"phone": "13800138888", "employee_no": "QC-RESET"},
+        json={"phone": "13800138888"},
     )
     assert requested.status_code == 202
     reset_data = requested.json()["data"]
@@ -328,7 +384,7 @@ def test_forgot_password_does_not_reveal_identity(tmp_path: Path, monkeypatch) -
     test_client = client(tmp_path)
     response = test_client.post(
         "/api/v1/auth/forgot-password",
-        json={"phone": "13999999999", "employee_no": "UNKNOWN"},
+        json={"phone": "13999999999"},
     )
     assert response.status_code == 202
     assert response.json()["data"] == {

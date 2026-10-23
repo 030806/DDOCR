@@ -30,7 +30,7 @@ def run_pipeline(
     for roi in rois:
         try:
             roi_image = crop_roi(image, roi)
-            variants = generate_variants(roi_image, config.scale, config.rotations)
+            variants = generate_variants(roi_image, config.scale, config.rotations, config.illumination)
             for variant in variants:
                 for record in engine.recognize(variant.image):
                     if len(record.polygon) < 2:
@@ -50,6 +50,8 @@ def run_pipeline(
                             text_bbox_original=polygon,
                             rotation=variant.rotation,
                             scale=variant.scale,
+                            model_candidates=record.model_candidates,
+                            model_raw_log_probability=record.model_raw_log_probability,
                         )
                     )
         except Exception as exc:

@@ -1,4 +1,5 @@
 from pathlib import Path
+from dataclasses import replace
 from threading import Barrier, Lock, Thread
 from time import sleep
 from typing import Any
@@ -73,6 +74,21 @@ def test_default_engine_uses_onnx_backend(tmp_path: Path) -> None:
     engine.close()
 
 
+def test_onnx_model_settings_reach_the_recognizer(tmp_path: Path) -> None:
+    configured = replace(
+        settings(tmp_path),
+        onnx_rec_model_path=tmp_path / "rec.onnx",
+        onnx_rec_keys_path=tmp_path / "keys.txt",
+        ctc_min_relative_probability=0.7,
+    )
+    engine = TerminalOcrEngine(configured)
+    loaded = engine.load()
+    assert isinstance(loaded, OnnxRecognizerEngine)
+    assert loaded.config.onnx_rec_model_path == configured.onnx_rec_model_path
+    assert loaded.config.onnx_rec_keys_path == configured.onnx_rec_keys_path
+    assert loaded.config.ctc_min_relative_probability == 0.7
+
+
 def test_settings_rejects_unknown_ocr_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DDOCR_OCR_BACKEND", "unsupported")
 
@@ -84,6 +100,47 @@ def test_settings_default_to_onnx(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DDOCR_OCR_BACKEND", raising=False)
 
     assert OcrSettings.from_env().backend == "onnx"
+
+
+def test_ctc_probability_setting_is_validated(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DDOCR_OCR_CTC_MIN_RELATIVE_PROBABILITY", "0.7")
+    assert OcrSettings.from_env().ctc_min_relative_probability == 0.7
+    monkeypatch.setenv("DDOCR_OCR_CTC_MIN_RELATIVE_PROBABILITY", "0")
+    with pytest.raises(ValueError, match="CTC_MIN_RELATIVE_PROBABILITY"):
+        OcrSettings.from_env()
+
+
+def test_custom_onnx_model_requires_matching_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DDOCR_OCR_ONNX_REC_MODEL_PATH", "rec.onnx")
+    monkeypatch.delenv("DDOCR_OCR_ONNX_REC_KEYS_PATH", raising=False)
+    with pytest.raises(ValueError, match="both model and keys"):
+        OcrSettings.from_env()
+
+
+def test_illumination_defaults_off_and_rejects_unknown_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DDOCR_OCR_ILLUMINATION", raising=False)
+    assert OcrSettings.from_env().illumination == "none"
+    monkeypatch.setenv("DDOCR_OCR_ILLUMINATION", "clahe")
+    assert OcrSettings.from_env().illumination == "clahe"
+    monkeypatch.setenv("DDOCR_OCR_ILLUMINATION", "unknown")
+    with pytest.raises(ValueError, match="DDOCR_OCR_ILLUMINATION"):
+        OcrSettings.from_env()
+
+
+def test_each_job_can_override_illumination_without_changing_the_shared_engine(tmp_path: Path) -> None:
+    seen: list[str] = []
+    wrapper = TerminalOcrEngine(
+        settings(tmp_path),
+        engine_factory=lambda _settings: object(),
+        engine_runner=lambda _engine, _image, _regions, configured: seen.append(configured.illumination),
+    )
+    for mode in ("he", "clahe", "none"):
+        wrapper.run(Image.new("RGB", (20, 10)), [region()], illumination=mode)
+    wrapper.run(Image.new("RGB", (20, 10)), [region()])
+    assert seen == ["he", "clahe", "none", "none"]
+    assert wrapper.settings.illumination == "none"
+    with pytest.raises(ValueError, match="illumination"):
+        wrapper.run(Image.new("RGB", (20, 10)), [region()], illumination="unknown")
 
 
 def test_load_initializes_once_without_running_inference(tmp_path: Path) -> None:

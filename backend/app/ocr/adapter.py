@@ -22,6 +22,11 @@ from app.ocr.contracts import (
 from app.ocr.engine import TerminalOcrEngine
 from app.ocr.errors import OcrImageDecodeError
 from app.ocr.geometry import full_image_roi, polygon_to_bbox
+from app.vendor.terminal_ocr_demo.rules import (
+    contains_only_allowed_characters,
+    mask_invalid_characters,
+    normalize_terminal_text,
+)
 
 
 class DemoDetection(Protocol):
@@ -120,11 +125,10 @@ class OcrAdapter:
     ) -> AdapterPageResult:
         """Decode one image file, execute OCR, and adapt its result.
 
-        Milestone 1 deliberately ignores future ROI options and uses one
-        whole-image ROI, preserving the existing REST request contract.
+        The file path uses one whole-image ROI. Per-job options such as
+        illumination are forwarded to the shared engine without mutating it.
         """
 
-        del options
         try:
             with Image.open(source_path) as opened_image:
                 opened_image.load()
@@ -133,12 +137,14 @@ class OcrAdapter:
             raise OcrImageDecodeError(
                 f"OCR source image cannot be decoded: {source_path}"
             ) from exc
-        return self.recognize_image(image)
+        return self.recognize_image(image, options=options)
 
     def recognize_image(
         self,
         image: Image.Image,
         regions: Sequence[OcrRegion] | None = None,
+        *,
+        options: dict[str, Any] | None = None,
     ) -> AdapterPageResult:
         """Execute OCR for an in-memory image and adapt all detections."""
 
@@ -146,7 +152,11 @@ class OcrAdapter:
             full_image_roi(image.width, image.height),
         )
         started = perf_counter()
-        demo_result = self._engine.run(image, active_regions)
+        illumination = (options or {}).get("illumination")
+        demo_result = (
+            self._engine.run(image, active_regions, illumination=illumination)
+            if illumination is not None else self._engine.run(image, active_regions)
+        )
         processing_ms = max(0, round((perf_counter() - started) * 1000))
         return self.adapt_page_result(
             demo_result,
@@ -197,13 +207,14 @@ class OcrAdapter:
         confidence, confidence_attributes = _normalize_confidence(
             detection.ocr_score
         )
-        # Keep detected text visible when terminal-code rules cannot resolve it.
-        # The unresolved flag and assessment still preserve the review decision.
-        text = (
-            detection.raw_text
-            if detection.output_text in (None, "")
-            else detection.output_text
-        )
+        # Keep uncertain text visible with a marker for each illegal character.
+        # The original OCR text remains available separately for correction.
+        if detection.output_text not in (None, ""):
+            text = detection.output_text
+        elif contains_only_allowed_characters(detection.raw_text):
+            text = normalize_terminal_text(detection.raw_text)
+        else:
+            text = mask_invalid_characters(detection.raw_text)
         assessment = _json_safe(detection.assessment)
         attributes: dict[str, Any] = {
             "roi_id": str(detection.roi_id),
@@ -216,6 +227,18 @@ class OcrAdapter:
         }
         if assessment is not None:
             attributes["assessment"] = assessment
+        model_candidates = getattr(detection, "model_candidates", ())
+        if model_candidates:
+            attributes["model_candidates"] = _json_safe(model_candidates)
+            attributes["model_raw_log_probability"] = _json_safe(
+                getattr(detection, "model_raw_log_probability", None)
+            )
+            attributes["confidence_refers_to_raw_text"] = True
+
+        review_status = getattr(detection.assessment, "review_status", None)
+        needs_review = bool(detection.is_unresolved) or "#" in str(text) or not str(text) or review_status in {
+            "review_required", "unresolved",
+        }
 
         # Reject accidental NaN/Infinity or unsupported objects before a future
         # repository passes this mapping to a SQLAlchemy JSON column.
@@ -226,6 +249,6 @@ class OcrAdapter:
             polygon=polygon,
             bbox=bbox,
             roi_id=str(detection.roi_id),
-            review_required=bool(detection.is_unresolved) or not str(text),
+            review_required=needs_review,
             attributes=attributes,
         )

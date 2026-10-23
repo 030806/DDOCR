@@ -11,7 +11,7 @@ const dragOffset = ref<DragOffset>({ x: 0, y: 0 })
 let dragStart: { pointerX: number; pointerY: number; offset: DragOffset; bounds: DOMRect } | undefined
 
 watch(() => [props.open, props.item] as const, ([open, item]) => {
-  if (open && item) correctionText.value = item.corrected || item.text
+  if (open && item) correctionText.value = item.corrected || item.rawText || item.text
   if (!open) {
     stopDrag()
     dragOffset.value = { x: 0, y: 0 }
@@ -69,7 +69,8 @@ function save() {
       </div>
     </template>
     <div class="modal-label">原始识别</div>
-    <div class="original-text">{{ item?.text }}</div>
+    <div class="original-text">{{ item?.rawText || item?.text }}</div>
+    <p v-if="item?.rawText && item.rawText !== item.text" class="modal-hint">待核对显示：{{ item.text }}</p>
     <div class="modal-label">纠正内容</div>
     <a-textarea v-model:value="correctionText" :rows="4" :maxlength="500" show-count autofocus />
     <p class="modal-hint">保存后会显示纠正内容，同时保留模型原始识别结果。</p>

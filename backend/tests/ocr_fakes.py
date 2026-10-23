@@ -20,8 +20,9 @@ class FakeOcrAdapter:
 
     def recognize_image(
         self, image: Image.Image, regions: Sequence[OcrRegion] | None = None,
+        *, options: dict[str, Any] | None = None,
     ) -> AdapterPageResult:
-        del image
+        del image, options
         active = tuple(regions or ())
         detections = []
         for region in active:

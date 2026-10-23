@@ -74,6 +74,13 @@ def test_adapt_detection_maps_demo_dto_to_ddocr_dto() -> None:
     assert not adapted.review_required
 
 
+def test_rule_based_character_correction_requires_review() -> None:
+    corrected = detection(assessment=SimpleNamespace(review_status="review_required"))
+    adapted = OcrAdapter.adapt_detection(corrected, image_width=100, image_height=80)
+    assert adapted.text == "K21C"
+    assert adapted.review_required
+
+
 def test_output_text_none_falls_back_to_raw_text() -> None:
     adapted = OcrAdapter.adapt_detection(
         detection(output_text=None, raw_text="X12"),
@@ -84,15 +91,18 @@ def test_output_text_none_falls_back_to_raw_text() -> None:
     assert adapted.text == "X12"
 
 
-@pytest.mark.parametrize("raw_text", ["K2IC", "电源-24V", " cable / 01 "])
-def test_empty_output_falls_back_to_raw_text_and_requires_review(raw_text: str) -> None:
+@pytest.mark.parametrize("raw_text, expected", [
+    ("X-16", "X-16"), ("X/16", "X/16"),
+    ("K2IC", "K2#C"), ("电源-24V", "##-24#"), ("X（16", "X#16"),
+])
+def test_empty_output_keeps_allowed_text_only_and_requires_review(raw_text: str, expected: str) -> None:
     adapted = OcrAdapter.adapt_detection(
         detection(output_text="", raw_text=raw_text, is_unresolved=True),
         image_width=100,
         image_height=80,
     )
 
-    assert adapted.text == raw_text
+    assert adapted.text == expected
     assert adapted.review_required
     assert adapted.attributes["raw_text"] == raw_text
     assert adapted.attributes["is_unresolved"] is True

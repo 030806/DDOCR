@@ -42,15 +42,9 @@ YOLOX 服务启动时加载权重；权重缺失、模型结构不匹配或 GPU 
 - YOLOX 服务 `POST /detect` 接收图片，返回原图像素坐标下的中心点及置信度。DDOCR 保存原始点和有效点，页面只画蓝色中心点，不画 YOLOX 框。
 - `GET /api/v1/ocr/jobs/{job_id}/pages` 增加 `terminal_model_points`、`terminal_points`、`terminal_error`、`terminal_revision` 字段，不改变已有 OCR 结果接口。历史页面的 `terminal_points=null` 表示没有端子检测记录；`[]` 表示模型正常运行但检出 0 个。
 - `PUT /api/v1/ocr/jobs/{job_id}/pages/{page_no}/terminal-points` 接收全部有效点与 `base_revision`，用于增删和移动蓝点；并发修订冲突返回 409。原始模型点不受人工修正影响。
-- 表格行数为 `max(有效蓝点数, 有效线号数)`。端子号只填前 N 行，多出的线号仍出现在表格中。图片任务导出的 Excel 另含“端子对照表”工作表。
+- 端子号严格为有效蓝点数 `N` 个，每个端子最多匹配一条最近线号；未匹配线号另占空端子号行。表格总行数为 `N + 未匹配线号数`，可能超过旧版的 `max(N, M)`。图片任务导出的 Excel 另含采用同一匹配规则的“端子对照表”工作表。
 
 ## 上线核查
-
-### 重启后查看历史端子点
-
-识别成功的原始点和有效点分别保存到数据库 `pages.terminal_model_points`、`pages.terminal_points`，人工点击“保存端子点”后写入有效点并递增 `terminal_revision`。重启后从任务记录打开同一任务即可读取，无须重新运行 YOLOX；尚未保存的编辑草稿不会保留。`terminal_points=null` 的旧任务或检测失败任务不显示端子编辑按钮，`[]` 表示检测完成但没有有效点，仍支持编辑补点。
-
-新识别需要分别启动 DDOCR 与 YOLOX；IDE 重启不会自动启动独立 YOLOX 进程，终端的 `$env:YOLOX_DEVICE` 也需重新设置。DDOCR 从 `backend/.env` 读取 `DDOCR_YOLOX_URL`；保持数据库地址不变。启动后先检查 `http://127.0.0.1:8765/health`。历史结果缺失时核对当前任务 ID、页面接口的 `terminal_points`/`terminal_error`，不要把未检测的旧任务当作已有结果丢失。
 
 结果表格每行均提供选择框，包括端子数多于 OCR 线号数时的空线号行；“全选当前”和已选数量按表格行计算。删除、恢复仅处理所选行关联的 OCR 结果，空线号行不提交给 OCR 复核接口。端子点的删除仍在图片端子点编辑中进行。
 
@@ -62,3 +56,7 @@ YOLOX 服务启动时加载权重；权重缺失、模型结构不匹配或 GPU 
 4. 核查 `N>M` 与 `M>N` 的表格和 Excel，以及 YOLOX 服务中断时 OCR 结果仍可查看。
 
 本地已通过模拟检测器的接口测试；由于本机未安装与部署 GPU 对应的 PyTorch 环境，真实权重的推理冒烟测试须在远端 GPU 服务器完成。
+
+## 光照预处理对照
+
+PPOCR 的光照预处理通过 `DDOCR_OCR_ILLUMINATION=none|he|clahe` 配置，默认 `none`。`he` 为亮度通道全局直方图均衡化，`clahe` 为局部均衡化；YOLOX 仍使用原图。部署后可运行 `backend/scripts/compare_illumination.py` 对同一组带真值图片比较三种模式，再决定是否调整默认值。详细输入和判读要求见 [15_DDOCR_1011_端子与线号识别优化方案.md](15_DDOCR_1011_端子与线号识别优化方案.md)。

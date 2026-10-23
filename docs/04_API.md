@@ -275,16 +275,16 @@ result_count, review_count, created_by{id,name}, error
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/api/v1/auth/forgot-password` | 使用联系电话和员工编号申请一次性验证码，统一返回 202 |
+| POST | `/api/v1/auth/forgot-password` | 仅使用联系电话申请一次性验证码，统一返回 202 |
 | POST | `/api/v1/auth/reset-password` | 使用联系电话、验证码和新密码完成重置，成功返回 204 |
 
-验证码为 6 位数字，有效期 10 分钟，最多允许 5 次错误尝试；再次申请会使旧验证码失效。重置成功后撤销该用户全部已有会话。仅当 `DDOCR_EXPOSE_PASSWORD_RESET_CODE=true` 时，申请响应的 `data` 包含 `development_code` 供本地联调。生产环境必须关闭该配置并接入短信发送服务。
+验证码为 6 位数字，有效期 10 分钟，最多允许 5 次错误尝试；再次申请会使旧验证码失效。重置成功后撤销该用户全部已有会话。当前没有短信发送服务；仅当 `DDOCR_EXPOSE_PASSWORD_RESET_CODE=true` 时，申请响应的 `data` 包含 `development_code` 供演示。关闭该配置时，用户无法自行取得验证码，不能将此功能视为已上线的手机找回密码服务。
 # 任务复核与数据集入库扩展
 
 新增接口及请求示例见 [11_Dataset_Collection.md](11_Dataset_Collection.md)。已有 OCR、纠正、编辑与导出接口契约保持不变。
 ## 结果表格字段
 
-新执行的 OCR 任务中，若端子编号规则无法确定编号、输出为空，结果 `text` 回退为模型原始识别文字（保留大小写、空格及标点），列表和表格的 `display_text` 因而仍可显示识别内容；人工纠正仍优先展示。无法确定的结果保留待复核标记和规则评估信息。规则产生非空编号时继续使用该编号；模型原始文字也为空时不生成替代内容。此调整不修改已有历史结果，历史空白结果可重新识别。
+新执行的 OCR 任务中，先尝试受模型逐字符概率约束的单字符候选修正，再按合法字符集检查。尚不能修正的非法字符逐字替换为 `#`，例如 `X（` 显示为 `X#`；`#` 只作为编号库和格式规则的待核对通配符，不会自动变成具体字符或已确认编号。列表、表格和导出显示遮蔽后的文字，`attributes.raw_text` 保留原文供人工纠正；待核对状态保留。全部字符合法但规则仍无法确定时继续显示原文。此调整不修改已有历史结果，历史空白结果可重新识别。
 
 `GET /ocr/jobs/{job_id}/pages/{page_no}/results` 的每条结果新增 `terminal_number`（字符串）、`manual_confirmed`（布尔）、`table_note`（字符串）和 `table_revision`（整数）。线缆编号继续使用已有 `display_text`，编辑时调用已有纠正接口。
 

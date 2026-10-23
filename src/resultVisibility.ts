@@ -23,6 +23,7 @@ export function filterOcrItems(items: OcrItem[], filters: ResultFilters): OcrIte
     if (item.reviewStatus === 'false_positive' && !filters.showFalsePositive) return false
     if (filters.lowOnly ? item.score >= activeThreshold : item.score < filters.minimumConfidence) return false
     return !term || (item.corrected || item.text).toLowerCase().includes(term)
+      || (item.rawText || '').toLowerCase().includes(term)
   })
 }
 

@@ -1,3 +1,5 @@
+import type { IlluminationMode } from './ocr'
+
 export type TaskStatus = 'queued' | 'running' | 'succeeded' | 'partial' | 'failed'
 
 export type OcrJobStatus =
@@ -19,6 +21,7 @@ export type OcrTask = {
   modelId: string
   modelVersion?: string
   modelName: string
+  illumination?: IlluminationMode
   pageCount: number
   status: TaskStatus
   jobStatus?: OcrJobStatus

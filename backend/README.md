@@ -62,11 +62,25 @@ RapidOCR（ONNX Runtime）推理依赖。
 ```dotenv
 DDOCR_OCR_DEVICE=cpu
 DDOCR_OCR_BACKEND=onnx
+DDOCR_OCR_CTC_MIN_RELATIVE_PROBABILITY=0.5
 DDOCR_OCR_SCALE=2.0
 DDOCR_OCR_ROTATIONS=0,90,180,270
 DDOCR_OCR_MAX_CONCURRENCY=1
 DDOCR_OCR_EXECUTION_MODE=async
 ```
+
+ONNX 识别器会在同一次 RapidOCR 推理中读取 CTC 分数矩阵，对含非法字符的文本生成最多 5 条合法字符候选。
+当原始文本恰有一个非法字符、候选是完整的库内/格式内线号，且候选模型序列概率至少为原始文本的
+`DDOCR_OCR_CTC_MIN_RELATIVE_PROBABILITY` 倍时，正式文本采用该候选并标为待人工复核；
+否则保留现有未解决结果。返回的 `confidence` 仍是原始首选文本的聚合分数，候选证据保存在
+结果 `attributes.model_candidates` 和 `attributes.model_raw_log_probability` 中。
+
+当前 `RapidOCR()` 默认加载其自带识别模型，`DemoConfig.rec_model_name` 只用于 Paddle 后端。
+要使用项目微调权重，需先导出与 RapidOCR 1.4.4 识别预处理和 CTC 输出兼容的 ONNX 模型，
+并在部署环境同时配置 `DDOCR_OCR_ONNX_REC_MODEL_PATH` 和
+`DDOCR_OCR_ONNX_REC_KEYS_PATH`。这两项均须为远端服务器上的绝对路径；字符表应与模型输出类别
+一一对应。Paddle 后端目前仍仅提供首选文本，不执行基于模型概率的替换。部署后可运行
+`python scripts/check_ocr_candidates.py --image /path/to/photo.jpg` 核查实际模型与候选。
 
 将 `DDOCR_OCR_BACKEND` 设置为 `paddle` 可回退至原 PaddleOCR/PaddleX 引擎；ONNX
 模式不加载 Paddle，也不需要 PaddleX 模型缓存。模型代码和端子编号库位于 `app/vendor/terminal_ocr_demo/`，不依赖仓库根目录的

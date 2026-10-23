@@ -44,11 +44,12 @@ describe('OCR API adapters', () => {
       id: 'job-1', name: 'terminal', file_name: 'terminal.png',
       created_at: '2026-07-17T00:00:00Z', model_id: 'mock',
       model_version: '1.0.0', page_count: 1, status: 'succeeded',
-      result_count: 3, review_count: 1,
+      result_count: 3, review_count: 1, options: { illumination: 'clahe' },
     })
     expect(task.fileName).toBe('terminal.png')
     expect(task.status).toBe('partial')
     expect(task.regionCount).toBe(3)
+    expect(task.illumination).toBe('clahe')
   })
 
   it('maps confidence, bbox and polygon without changing OCR values', () => {
@@ -69,7 +70,7 @@ describe('OCR API adapters', () => {
       id: 'result-unresolved', text: '电源-24V', confidence: 0.82,
       bbox: [1, 2, 30, 40], display_text: '电源-24V',
       is_corrected: false, comments: [], revision: 0,
-      attributes: { is_unresolved: true },
+      attributes: { is_unresolved: true, raw_text: 'X（' },
     })
     const resolved = mapApiResult({
       id: 'result-resolved', text: 'K111A2', confidence: 0.96,
@@ -79,6 +80,7 @@ describe('OCR API adapters', () => {
     })
 
     expect(unresolved.needsRawTextReview).toBe(true)
+    expect(unresolved.rawText).toBe('X（')
     expect(resolved.needsRawTextReview).toBe(false)
   })
 
@@ -182,6 +184,19 @@ describe('OCR API adapters', () => {
       model_id: 'mock', model_version: '1.0.0',
       pages: [{ page_no: 1, regions: [{ client_id: 'roi-1', bbox: [100, 120, 400, 300] }] }],
     })
+  })
+
+  it('sends the chosen illumination mode for a region job', async () => {
+    const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
+      data: { data: { id: 'region-job-he', status: 'queued' } },
+    } as never)
+    await createRegionOcrTask({
+      name: 'HE 选区', sourceJobId: 'source-job-1',
+      model: { value: 'mock', version: '1.0.0' },
+      regions: [{ clientId: 'roi-1', bbox: [100, 120, 400, 300] }],
+      illumination: 'he',
+    })
+    expect(post).toHaveBeenCalledWith('/ocr/region-jobs', expect.objectContaining({ illumination: 'he' }))
   })
 
   it('uses the normal job endpoint when preview has no selected regions', async () => {

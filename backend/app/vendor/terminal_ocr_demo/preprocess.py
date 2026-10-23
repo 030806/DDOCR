@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 
 from PIL import Image
+import cv2
+import numpy as np
 
 
 @dataclass(frozen=True)
@@ -17,9 +19,12 @@ def generate_variants(
     image: Image.Image,
     scale: float,
     rotations: tuple[int, ...],
+    illumination: str = "none",
 ) -> list[ProcessedVariant]:
     if scale <= 0:
         raise ValueError("Scale must be positive")
+    if illumination not in {"none", "he", "clahe"}:
+        raise ValueError("Unknown illumination mode")
 
     normalized_rotations: list[int] = []
     for rotation in rotations:
@@ -33,7 +38,15 @@ def generate_variants(
         max(1, round(image.width * scale)),
         max(1, round(image.height * scale)),
     )
-    scaled = image.convert("RGB").resize(scaled_size, Image.Resampling.BICUBIC)
+    rgb = image.convert("RGB")
+    if illumination != "none":
+        lab = cv2.cvtColor(np.asarray(rgb), cv2.COLOR_RGB2LAB)
+        if illumination == "he":
+            lab[:, :, 0] = cv2.equalizeHist(lab[:, :, 0])
+        else:
+            lab[:, :, 0] = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(lab[:, :, 0])
+        rgb = Image.fromarray(cv2.cvtColor(lab, cv2.COLOR_LAB2RGB))
+    scaled = rgb.resize(scaled_size, Image.Resampling.BICUBIC)
     return [
         ProcessedVariant(
             image=scaled.rotate(rotation, expand=True) if rotation else scaled.copy(),

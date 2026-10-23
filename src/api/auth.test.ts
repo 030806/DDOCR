@@ -60,9 +60,9 @@ describe('auth API', () => {
     const post = vi.spyOn(apiClient, 'post')
       .mockResolvedValueOnce({ data: { data: { message: 'ok', expires_in: 600, development_code: '123456' } } })
       .mockResolvedValueOnce({ status: 204 })
-    await expect(requestPasswordReset('13800132607', 'QC-042')).resolves.toMatchObject({ development_code: '123456' })
+    await expect(requestPasswordReset('13800132607')).resolves.toMatchObject({ development_code: '123456' })
     expect(post).toHaveBeenNthCalledWith(1, '/auth/forgot-password', {
-      phone: '13800132607', employee_no: 'QC-042',
+      phone: '13800132607',
     })
     await resetPassword('13800132607', '123456', 'Updated456')
     expect(post).toHaveBeenNthCalledWith(2, '/auth/reset-password', {

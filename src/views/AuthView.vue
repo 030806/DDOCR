@@ -16,7 +16,7 @@ const developmentCode = ref('')
 const captchaId = ref('')
 const captchaImage = ref('')
 const form = reactive({
-  name: '', email: '', employeeNo: '', department: '', phone: '',
+  name: '', email: '', department: '', phone: '',
   password: '', confirm: '', code: '', captchaCode: '',
 })
 const title = computed(() => {
@@ -73,7 +73,7 @@ async function submit() {
 }
 
 async function submitReset() {
-  if (!form.phone || !form.employeeNo) return message.warning('请填写联系电话和员工编号')
+  if (!form.phone) return message.warning('请填写手机号')
   if (resetStep.value === 2) {
     if (!/^\d{6}$/.test(form.code)) return message.warning('请输入 6 位验证码')
     if (!validPassword(form.password)) return message.warning('密码至少 8 位，并同时包含字母和数字')
@@ -82,10 +82,14 @@ async function submitReset() {
   submitting.value = true
   try {
     if (resetStep.value === 1) {
-      const result = await requestPasswordReset(form.phone, form.employeeNo)
+      const result = await requestPasswordReset(form.phone)
       developmentCode.value = result.development_code || ''
+      if (!developmentCode.value) {
+        message.warning('当前无法获取验证码，请联系管理员')
+        return
+      }
       resetStep.value = 2
-      message.success('重置验证码已生成')
+      message.success('验证码已生成')
     } else {
       await resetPassword(form.phone, form.code, form.password)
       message.success('密码已重置，请使用新密码登录')
@@ -102,14 +106,13 @@ async function submitReset() {
     <section class="auth-card">
       <div class="auth-brand"><span class="brand-mark"><span></span><span></span><span></span></span><div><strong>矩识 OCR</strong><small>INDUSTRIAL VISION</small></div></div>
       <h1>{{ title }}</h1><p>工业端子排 OCR 管理系统</p>
-      <a-alert v-if="developmentCode" type="info" show-icon class="reset-code-alert" :message="`开发联调验证码：${developmentCode}`" />
+      <a-alert v-if="developmentCode" type="info" show-icon class="reset-code-alert" :message="`验证码：${developmentCode}`" />
       <a-form layout="vertical" @submit.prevent="submit">
         <template v-if="mode === 'register'">
           <a-form-item label="姓名"><a-input v-model:value="form.name" /></a-form-item>
         </template>
         <template v-if="mode === 'forgot'">
-          <a-form-item label="联系电话"><a-input v-model:value="form.phone" :disabled="resetStep === 2" /></a-form-item>
-          <a-form-item label="员工编号"><a-input v-model:value="form.employeeNo" :disabled="resetStep === 2" /></a-form-item>
+          <a-form-item label="手机号"><a-input v-model:value="form.phone" :disabled="resetStep === 2" inputmode="tel" /></a-form-item>
           <template v-if="resetStep === 2">
             <a-form-item label="验证码"><a-input v-model:value="form.code" maxlength="6" inputmode="numeric" /></a-form-item>
             <a-form-item label="新密码"><a-input-password v-model:value="form.password" /></a-form-item>

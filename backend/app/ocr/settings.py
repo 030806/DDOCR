@@ -60,6 +60,10 @@ class OcrSettings:
     max_concurrency: int
     execution_mode: str
     backend: str = "onnx"
+    illumination: str = "none"
+    ctc_min_relative_probability: float = 0.5
+    onnx_rec_model_path: Path | None = None
+    onnx_rec_keys_path: Path | None = None
 
     @classmethod
     def from_env(cls) -> OcrSettings:
@@ -78,6 +82,14 @@ class OcrSettings:
             "DDOCR_OCR_EXECUTION_MODE", "blocking"
         ).strip().lower()
         backend = os.getenv("DDOCR_OCR_BACKEND", "onnx").strip().lower()
+        illumination = os.getenv("DDOCR_OCR_ILLUMINATION", "none").strip().lower()
+        ctc_min_relative_probability = float(
+            os.getenv("DDOCR_OCR_CTC_MIN_RELATIVE_PROBABILITY", "0.5")
+        )
+        onnx_rec_model_raw = os.getenv("DDOCR_OCR_ONNX_REC_MODEL_PATH", "").strip()
+        onnx_rec_keys_raw = os.getenv("DDOCR_OCR_ONNX_REC_KEYS_PATH", "").strip()
+        onnx_rec_model_path = Path(onnx_rec_model_raw).expanduser().resolve() if onnx_rec_model_raw else None
+        onnx_rec_keys_path = Path(onnx_rec_keys_raw).expanduser().resolve() if onnx_rec_keys_raw else None
         rotations = _parse_rotations(
             os.getenv("DDOCR_OCR_ROTATIONS", "0,90,180,270")
         )
@@ -94,6 +106,16 @@ class OcrSettings:
             )
         if backend not in {"paddle", "onnx"}:
             raise ValueError("DDOCR_OCR_BACKEND must be 'paddle' or 'onnx'")
+        if illumination not in {"none", "he", "clahe"}:
+            raise ValueError("DDOCR_OCR_ILLUMINATION must be 'none', 'he', or 'clahe'")
+        if not 0 < ctc_min_relative_probability <= 1:
+            raise ValueError("DDOCR_OCR_CTC_MIN_RELATIVE_PROBABILITY must be in (0, 1]")
+        if (onnx_rec_model_path is None) != (onnx_rec_keys_path is None):
+            raise ValueError("Custom ONNX recognition requires both model and keys paths")
+        if onnx_rec_model_path is not None and not onnx_rec_model_path.is_file():
+            raise ValueError(f"DDOCR_OCR_ONNX_REC_MODEL_PATH does not exist: {onnx_rec_model_path}")
+        if onnx_rec_keys_path is not None and not onnx_rec_keys_path.is_file():
+            raise ValueError(f"DDOCR_OCR_ONNX_REC_KEYS_PATH does not exist: {onnx_rec_keys_path}")
 
         return cls(
             device=device,
@@ -104,4 +126,8 @@ class OcrSettings:
             max_concurrency=max_concurrency,
             execution_mode=execution_mode,
             backend=backend,
+            illumination=illumination,
+            ctc_min_relative_probability=ctc_min_relative_probability,
+            onnx_rec_model_path=onnx_rec_model_path,
+            onnx_rec_keys_path=onnx_rec_keys_path,
         )
