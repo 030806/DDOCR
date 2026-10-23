@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { TabulatorFull as Tabulator, type CellComponent, type ColumnDefinition } from 'tabulator-tables'
 import 'tabulator-tables/dist/css/tabulator.min.css'
 import type { OcrItem } from '../types/ocr'
+import { gridTerminalNumber } from '../terminalPairTable'
 import { gridFields, normalizeGridValue, parseGridClipboard, sequentialNumbers, type GridChange, type GridField, type GridValues } from '../ocrGridEditing'
 
 type GridRow = GridValues & { id: string; index: number; item?: OcrItem; status: string; selected: boolean; hasTerminal: boolean; requiresTerminalReview: boolean }
@@ -101,7 +102,8 @@ const previewRows = computed(() => numberTargets.value.map(row => {
 function rowData(): GridRow[] {
   return props.rows.map((row, index) => ({
     ...(row.item ? props.values(row.item.id) : { terminalNumber: '', cable: '', manualConfirmed: false, tableNote: '' }),
-    terminalNumber: row.item ? props.values(row.item.id).terminalNumber || row.terminalNumber : row.terminalNumber,
+    // A saved number from an older positional match must not create an extra numbered row.
+    terminalNumber: gridTerminalNumber(row, row.item ? props.values(row.item.id).terminalNumber : ''),
     id: row.selectionId, item: row.item, index: index + 1, status: props.statuses[row.item?.id || ''] || '已保存', selected: props.selectedIds.includes(row.selectionId),
     hasTerminal: row.hasTerminal, requiresTerminalReview: row.requiresTerminalReview,
   }))
@@ -240,7 +242,7 @@ function refresh() {
         if (Object.keys(patch).length) void existing.update(patch)
         if ('requiresTerminalReview' in patch) {
           const cell = existing.getCell('terminalNumber')
-          if (cell && !cell.getElement().querySelector('input')) cell.getElement().textContent = row.terminalNumber + (row.requiresTerminalReview ? '（待核对端子）' : '')
+          if (cell && !cell.getElement().querySelector('input')) cell.getElement().textContent = row.terminalNumber
         }
         // Keep the DOM control in sync even if Tabulator retained the formatter element.
         const checkbox = existing.getElement().querySelector<HTMLInputElement>('[tabulator-field="selected"] input')
@@ -270,7 +272,7 @@ onMounted(() => {
         emit('selection', selected)
       } },
       { title: '序号', field: 'index', width: 62, headerSort: false },
-      { ...textColumn('端子号', 'terminalNumber', 110), formatter(cell) { const row = cell.getRow().getData() as GridRow; const text = document.createElement('span'); text.textContent = String(cell.getValue() || '') + (row.requiresTerminalReview ? '（待核对端子）' : ''); return text }, cellClick(_event, cell) { if ((cell.getRow().getData() as GridRow).requiresTerminalReview) feedback.value = '该线号超出当前端子数量，请核对原图；确有漏检时，先补充并保存端子点' } }, { ...textColumn('线缆编号', 'cable', 170), formatter(cell) {
+      { ...textColumn('端子号', 'terminalNumber', 110), formatter(cell) { const text = document.createElement('span'); text.textContent = String(cell.getValue() || ''); return text }, cellClick(_event, cell) { if ((cell.getRow().getData() as GridRow).requiresTerminalReview) feedback.value = '该线号尚无关联端子；确有漏检时，请先补充并保存端子点' } }, { ...textColumn('线缆编号', 'cable', 170), formatter(cell) {
         const content = document.createElement('span'); content.textContent = String(cell.getValue() ?? '')
         const item = (cell.getRow().getData() as GridRow).item
         if (item?.needsRawTextReview && !item.corrected) { const badge = document.createElement('small'); badge.className = 'ocr-raw-review'; badge.textContent = ' 待核对原始标记'; content.appendChild(badge) }
@@ -316,7 +318,6 @@ onBeforeUnmount(() => { built = false; host.value?.removeEventListener('paste', 
     <p class="ocr-grid-hint">双击编辑；Tab 左右、Enter 上下；拖选区域后 Ctrl+C/V；Ctrl+D 向下填充；选择列从未勾选行拖选可勾选，从已勾选行拖选可取消，支持 Shift 连选。</p>
     <p class="ocr-grid-hint">人工确认列支持纵向拖选：从未确认行开始批量确认，从已确认行开始批量取消；只读行跳过，整批操作可撤销。</p>
     <p v-if="editingDisabled" class="ocr-grid-hint">请先保存或退出端子点编辑，再修改表格或编号；当前显示的端子点可能尚未保存。</p>
-    <p v-if="rows.some(row => row.requiresTerminalReview)" class="ocr-grid-boundary" role="note">部分线号超出当前端子数量，标记为“待核对端子”；请核对原图，确有漏检时先补充并保存端子点。这些行的端子号暂不可编辑或填充。</p>
     <div ref="host" class="ocr-grid-host" tabindex="0"></div>
     <p class="ocr-grid-feedback" role="status">{{ feedback }}</p>
     <div v-for="(status, id) in statuses" :key="id" class="ocr-grid-conflict">

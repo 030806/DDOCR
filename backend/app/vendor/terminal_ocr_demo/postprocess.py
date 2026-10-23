@@ -4,10 +4,16 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import asdict, dataclass, replace
+import math
 
 from .config import DemoConfig
 from .models import CodeAssessment, OCRDetection
-from .rules import TerminalCodeRules
+from .rules import (
+    ALLOWED_CHARACTERS,
+    TerminalCodeRules,
+    contains_only_allowed_characters,
+    normalize_terminal_text,
+)
 
 
 @dataclass(frozen=True)
@@ -123,14 +129,47 @@ _MATCH_PRIORITY = {
     "base_regex": 3,
     "extended_regex": 2,
     "one_character_correction": 1,
+    "model_probability_correction": 1,
 }
 
 
 def _assessed(
     detection: OCRDetection,
     rules: TerminalCodeRules,
+    config: DemoConfig,
 ) -> OCRDetection:
     assessment = rules.assess(detection.raw_text)
+    raw = normalize_terminal_text(detection.raw_text)
+    raw_log_probability = detection.model_raw_log_probability
+    if (
+        not contains_only_allowed_characters(raw)
+        and raw_log_probability is not None
+        and math.isfinite(raw_log_probability)
+    ):
+        minimum_log_ratio = math.log(config.ctc_min_relative_probability)
+        for candidate in detection.model_candidates:
+            text = normalize_terminal_text(candidate.text)
+            if not math.isfinite(candidate.log_probability):
+                continue
+            if candidate.log_probability - raw_log_probability < minimum_log_ratio:
+                continue
+            if len(text) != len(raw) or not contains_only_allowed_characters(text):
+                continue
+            changed = [index for index, (before, after) in enumerate(zip(raw, text)) if before != after]
+            if len(changed) != 1 or raw[changed[0]] in ALLOWED_CHARACTERS:
+                continue
+            replacement = rules.assess(text)
+            if replacement.match_method not in {"exact_library", "base_regex", "extended_regex"}:
+                continue
+            assessment = replace(
+                replacement,
+                raw_text=detection.raw_text,
+                normalized_text=raw,
+                match_method="model_probability_correction",
+                edit_count=1,
+                review_status="review_required",
+            )
+            break
     return replace(detection, assessment=assessment)
 
 
@@ -178,6 +217,9 @@ def _audit_record(
     }
     if assessment is not None:
         record.update(asdict(assessment))
+    if detection.model_candidates:
+        record["model_candidates"] = [asdict(candidate) for candidate in detection.model_candidates]
+        record["model_raw_log_probability"] = detection.model_raw_log_probability
     return record
 
 
@@ -196,6 +238,92 @@ def _is_spatial_fragment(
     )
 
 
+def _horizontal_fragment_pair(left: OCRDetection, right: OCRDetection) -> bool:
+    """Accept a right-hand center inside the left quadrilateral's text band."""
+    if left.roi_id != right.roi_id:
+        return False
+    lx1, ly1, lx2, ly2 = _bounds(left)
+    rx1, ry1, rx2, ry2 = _bounds(right)
+    center_x, center_y = (rx1 + rx2) / 2, (ry1 + ry2) / 2
+    if lx2 <= lx1 or ly2 <= ly1 or rx2 <= rx1 or ry2 <= ry1:
+        return False
+    if center_x <= (lx1 + lx2) / 2:
+        return False
+    quad = _horizontal_quad(left)
+    if quad is not None:
+        top_dx = quad[1][0] - quad[0][0]
+        bottom_dx = quad[2][0] - quad[3][0]
+        if top_dx > 0 and bottom_dx > 0:
+            top_y = quad[0][1] + (quad[1][1] - quad[0][1]) * (center_x - quad[0][0]) / top_dx
+            bottom_y = quad[3][1] + (quad[2][1] - quad[3][1]) * (center_x - quad[3][0]) / bottom_dx
+        else:
+            top_y, bottom_y = ly1, ly2
+    else:
+        top_y, bottom_y = ly1, ly2
+    return min(top_y, bottom_y) <= center_y <= max(top_y, bottom_y)
+
+
+def _horizontal_quad(detection: OCRDetection) -> list[list[float]] | None:
+    """Normalize four corners to left-top, right-top, right-bottom, left-bottom."""
+    if len(detection.text_bbox_original) != 4:
+        return None
+    points = sorted(
+        ([float(point[0]), float(point[1])] for point in detection.text_bbox_original),
+        key=lambda point: (point[0], point[1]),
+    )
+    left = sorted(points[:2], key=lambda point: point[1])
+    right = sorted(points[2:], key=lambda point: point[1])
+    return [left[0], right[0], right[1], left[1]]
+
+
+def _merged_polygon(left: OCRDetection, right: OCRDetection) -> list[list[float]]:
+    left_quad, right_quad = _horizontal_quad(left), _horizontal_quad(right)
+    if left_quad is not None and right_quad is not None:
+        return [
+            left_quad[0], right_quad[1],
+            right_quad[2], left_quad[3],
+        ]
+    lx1, ly1, lx2, ly2 = _bounds(left)
+    rx1, ry1, rx2, ry2 = _bounds(right)
+    return [[min(lx1, rx1), min(ly1, ry1)], [max(lx2, rx2), min(ly1, ry1)],
+            [max(lx2, rx2), max(ly2, ry2)], [min(lx1, rx1), max(ly2, ry2)]]
+
+
+def _merge_horizontal_fragments(
+    detections: list[OCRDetection], rules: TerminalCodeRules,
+) -> tuple[list[OCRDetection], list[dict[str, object]]]:
+    remaining = detections[:]
+    audit: list[dict[str, object]] = []
+    while True:
+        candidates = [
+            ((_bounds(right)[0] + _bounds(right)[2]) / 2 -
+             (_bounds(left)[0] + _bounds(left)[2]) / 2, i, j)
+            for i, left in enumerate(remaining)
+            for j, right in enumerate(remaining)
+            if i != j and _horizontal_fragment_pair(left, right)
+        ]
+        if not candidates:
+            return remaining, audit
+        _, left_index, right_index = min(candidates)
+        left, right = remaining[left_index], remaining[right_index]
+        raw_text = left.raw_text.strip() + right.raw_text.strip()
+        assessment = rules.assess(raw_text)
+        merged = replace(
+            left, raw_text=raw_text, ocr_score=min(_score(left), _score(right)),
+            text_bbox_original=_merged_polygon(left, right), assessment=assessment,
+            output_text=assessment.output_text,
+            is_unresolved=not bool(assessment.output_text) or "#" in assessment.output_text,
+            cluster_id=f"{left.cluster_id}+{right.cluster_id}",
+        )
+        audit.append({
+            "disposition": "merged_horizontal_fragments", "roi_id": left.roi_id,
+            "source_cluster_ids": [left.cluster_id, right.cluster_id], "raw_text": raw_text,
+            "text_bbox_original": merged.text_bbox_original,
+        })
+        remaining = [item for index, item in enumerate(remaining) if index not in {left_index, right_index}]
+        remaining.append(merged)
+
+
 def postprocess_detections(
     detections: list[OCRDetection],
     rules: TerminalCodeRules,
@@ -206,7 +334,7 @@ def postprocess_detections(
     final_detections: list[OCRDetection] = []
     audit_records: list[dict[str, object]] = []
     for cluster in _make_clusters(detections, config):
-        members = [_assessed(item, rules) for item in cluster.members]
+        members = [_assessed(item, rules, config) for item in cluster.members]
         representative = next(
             item for item in members if item is not None and item.raw_text == cluster.representative.raw_text
             and item.text_bbox_original == cluster.representative.text_bbox_original
@@ -230,7 +358,7 @@ def postprocess_detections(
                     selected,
                     output_text=output_text,
                     cluster_id=cluster.cluster_id,
-                    is_unresolved=False,
+                    is_unresolved="#" in output_text,
                 )
             )
             for member in members:
@@ -273,6 +401,8 @@ def postprocess_detections(
                     _audit_record(member, cluster.cluster_id, disposition)
                 )
 
+    final_detections, fragment_audit = _merge_horizontal_fragments(final_detections, rules)
+    audit_records.extend(fragment_audit)
     final_detections.sort(
         key=lambda item: (item.roi_id, _bounds(item)[1], _bounds(item)[0])
     )

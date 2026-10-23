@@ -5,6 +5,14 @@ from dataclasses import field
 
 
 @dataclass(frozen=True)
+class ModelTextCandidate:
+    """A full CTC text candidate scored by the recognition model."""
+
+    text: str
+    log_probability: float
+
+
+@dataclass(frozen=True)
 class CodeAssessment:
     raw_text: str
     normalized_text: str
@@ -48,6 +56,8 @@ class OCRDetection:
     output_text: str | None = None
     cluster_id: str | None = None
     is_unresolved: bool = False
+    model_candidates: tuple[ModelTextCandidate, ...] = ()
+    model_raw_log_probability: float | None = None
 
 
 @dataclass(frozen=True)

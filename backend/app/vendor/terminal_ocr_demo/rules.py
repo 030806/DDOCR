@@ -12,15 +12,61 @@ from .config import DemoConfig
 from .models import CodeAssessment
 
 
-_REMOVABLE_PUNCTUATION = str.maketrans("", "", "./\\()[]{}:;,_-")
+ALLOWED_CHARACTERS = frozenset("0123456789ABCDHJKPUWX-/")
 _CONFUSION_GROUPS = ("8B", "0OD", "1IJ", "5S", "2Z")
+MASK_PLACEHOLDER = "#"
+_FORMAT_PREFIXES = "HJXKUW"
+_BASE_SUFFIXES = ("", "A1", "A2", "A3", "B1", "B2", "B3", "C", "D")
+_EXTENDED_SUFFIXES = (*_BASE_SUFFIXES, "C2", "P")
 
 
 def normalize_terminal_text(raw_text: str) -> str:
     """Normalize presentation noise without changing recognized letters/digits."""
 
     compact = "".join(character for character in raw_text if not character.isspace())
-    return compact.upper().translate(_REMOVABLE_PUNCTUATION)
+    return compact.upper()
+
+
+def contains_only_allowed_characters(raw_text: str) -> bool:
+    normalized = normalize_terminal_text(raw_text)
+    return bool(normalized) and all(character in ALLOWED_CHARACTERS for character in normalized)
+
+
+def mask_invalid_characters(raw_text: str) -> str:
+    """Preserve the position of every unrecognized character for human review."""
+
+    return "".join(
+        character if character in ALLOWED_CHARACTERS else MASK_PLACEHOLDER
+        for character in normalize_terminal_text(raw_text)
+    )
+
+
+def _wildcard_matches(masked: str, candidate: str) -> bool:
+    return len(masked) == len(candidate) and all(
+        actual == MASK_PLACEHOLDER or actual == expected
+        for actual, expected in zip(masked, candidate)
+    )
+
+
+def _format_matches_mask(
+    masked: str, pattern: Pattern[str], suffixes: tuple[str, ...],
+) -> bool:
+    """Probe the configured format with completions of the known code shape."""
+
+    for prefix in _FORMAT_PREFIXES:
+        for digit_count in range(1, 4):
+            for suffix in suffixes:
+                if len(masked) != 1 + digit_count + len(suffix):
+                    continue
+                digits = masked[1 : 1 + digit_count]
+                if not _wildcard_matches(masked[:1], prefix) or not all(
+                    character.isdigit() or character == MASK_PLACEHOLDER for character in digits
+                ) or not _wildcard_matches(masked[1 + digit_count :], suffix):
+                    continue
+                example = prefix + digits.replace(MASK_PLACEHOLDER, "0") + suffix
+                if pattern.fullmatch(example):
+                    return True
+    return False
 
 
 def _hamming_distance(left: str, right: str) -> int | None:
@@ -70,6 +116,25 @@ class TerminalCodeRules:
 
     def assess(self, raw_text: str) -> CodeAssessment:
         normalized = normalize_terminal_text(raw_text)
+        if not contains_only_allowed_characters(normalized):
+            masked = mask_invalid_characters(normalized)
+            candidates = tuple(sorted(
+                code for code in self.library_codes if _wildcard_matches(masked, code)
+            ))
+            if candidates:
+                rule_status = "masked_library_candidate"
+            elif _format_matches_mask(masked, self.base_pattern, _BASE_SUFFIXES):
+                rule_status = "masked_base_candidate"
+            elif _format_matches_mask(masked, self.extended_pattern, _EXTENDED_SUFFIXES):
+                rule_status = "masked_extended_candidate"
+            else:
+                rule_status = "masked_unresolved"
+            return self._assessment(
+                raw_text, normalized, output_text=masked, recommended_code=None,
+                candidate_codes=candidates, rule_status=rule_status,
+                match_method="masked_wildcard", edit_count=masked.count(MASK_PLACEHOLDER),
+                review_status="unresolved",
+            )
         if normalized in self.library_codes:
             return self._assessment(
                 raw_text,
@@ -107,7 +172,7 @@ class TerminalCodeRules:
                 review_status="review_required",
             )
 
-        candidates = self._correction_candidates(normalized)
+        candidates = () if any(character in normalized for character in "-/") else self._correction_candidates(normalized)
         if len(candidates) == 1:
             candidate = candidates[0]
             return self._assessment(

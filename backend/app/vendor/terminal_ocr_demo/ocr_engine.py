@@ -9,6 +9,7 @@ import numpy as np
 from PIL import Image
 
 from .config import DemoConfig
+from .models import ModelTextCandidate
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,8 @@ class RawOCRRecord:
     text: str
     score: float | None
     polygon: list[list[float]]
+    model_candidates: tuple[ModelTextCandidate, ...] = ()
+    model_raw_log_probability: float | None = None
 
 
 def build_paddleocr_kwargs(config: DemoConfig) -> dict[str, Any]:

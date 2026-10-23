@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { CheckCircleFilled, CloudUploadOutlined, EyeOutlined, SearchOutlined } from '@ant-design/icons-vue'
 import { ref } from 'vue'
-import type { ModelOption } from '../types/ocr'
+import type { IlluminationMode, ModelOption } from '../types/ocr'
 
 defineProps<{
   models: ModelOption[]
@@ -13,10 +13,12 @@ defineProps<{
   fileMeta: string
   hasFile: boolean
   regionCount: number
+  illumination: IlluminationMode
 }>()
 
 const emit = defineEmits<{
   'update:selectedModel': [value: string]
+  'update:illumination': [value: IlluminationMode]
   upload: [file: File]
   preview: []
   run: []
@@ -55,6 +57,19 @@ function handleFileChange(event: Event) {
         style="width: 260px"
         :options="models.map(model => ({ value: model.value, label: model.label }))"
         @update:value="emit('update:selectedModel', $event)"
+      />
+    </div>
+    <div class="model-control">
+      <label>光照处理</label>
+      <a-select
+        :value="illumination"
+        style="width: 150px"
+        :options="[
+          { value: 'none', label: '原图' },
+          { value: 'he', label: '全局 HE' },
+          { value: 'clahe', label: 'CLAHE' },
+        ]"
+        @update:value="emit('update:illumination', $event as IlluminationMode)"
       />
     </div>
     <button class="run-btn" :class="{ running: jobState === 'running' }" :disabled="!currentModel" @click="emit('run')">

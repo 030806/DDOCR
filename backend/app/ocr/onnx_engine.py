@@ -12,12 +12,21 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
+import logging
+import math
 
 import numpy as np
 from PIL import Image
 
 from app.vendor.terminal_ocr_demo.config import DemoConfig
 from app.vendor.terminal_ocr_demo.ocr_engine import RawOCRRecord
+from app.vendor.terminal_ocr_demo.models import ModelTextCandidate
+from app.vendor.terminal_ocr_demo.rules import ALLOWED_CHARACTERS
+
+from .ctc_candidates import CandidateTextRecognizer
+
+
+_LOG = logging.getLogger(__name__)
 
 
 def _as_polygon(value: Any) -> list[list[float]]:
@@ -59,8 +68,22 @@ def _normalize_records(result: Any) -> list[RawOCRRecord]:
         if not text_value:
             continue
         score = float(item[2]) if isinstance(item[2], (int, float)) else None
+        evidence = item[3] if len(item) > 3 and isinstance(item[3], dict) else {}
+        candidates = tuple(
+            candidate for candidate in evidence.get("model_candidates", ())
+            if isinstance(candidate, ModelTextCandidate)
+        )
+        raw_log_probability = evidence.get("model_raw_log_probability")
+        if not isinstance(raw_log_probability, (int, float)) or not math.isfinite(raw_log_probability):
+            raw_log_probability = None
         records.append(
-            RawOCRRecord(text=text_value, score=score, polygon=polygon)
+            RawOCRRecord(
+                text=text_value,
+                score=score,
+                polygon=polygon,
+                model_candidates=candidates,
+                model_raw_log_probability=raw_log_probability,
+            )
         )
     return records
 
@@ -82,15 +105,27 @@ class OnnxRecognizerEngine:
         self._ocr_factory = ocr_factory
         self._ocr: Any | None = None
 
-    @staticmethod
-    def _default_factory() -> Any:
+    def _default_factory(self) -> Any:
+        if (self.config.onnx_rec_model_path is None) != (self.config.onnx_rec_keys_path is None):
+            raise ValueError("Custom ONNX recognition requires both model and keys paths")
         try:
             from rapidocr_onnxruntime import RapidOCR
         except ModuleNotFoundError as exc:
             raise RuntimeError(
                 "rapidocr-onnxruntime is not installed in the backend environment"
             ) from exc
-        return RapidOCR()
+        options: dict[str, str] = {}
+        if self.config.onnx_rec_model_path is not None:
+            options["rec_model_path"] = str(self.config.onnx_rec_model_path)
+        if self.config.onnx_rec_keys_path is not None:
+            options["rec_keys_path"] = str(self.config.onnx_rec_keys_path)
+        ocr = RapidOCR(**options)
+        recognizer = getattr(ocr, "text_rec", None)
+        if recognizer is not None and hasattr(recognizer, "session") and hasattr(recognizer, "postprocess_op"):
+            ocr.text_rec = CandidateTextRecognizer(recognizer, ALLOWED_CHARACTERS)
+        else:
+            _LOG.warning("RapidOCR recognizer internals unavailable; CTC candidates disabled")
+        return ocr
 
     def _load(self) -> Any:
         if self._ocr is None:

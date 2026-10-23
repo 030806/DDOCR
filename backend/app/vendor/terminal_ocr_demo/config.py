@@ -14,6 +14,7 @@ class DemoConfig:
     rec_model_name: str = "PP-OCRv5_mobile_rec"
     device: str = "cpu"
     scale: float = 2.0
+    illumination: str = "none"
     rotations: tuple[int, ...] = (0, 90, 180, 270) #, 90, 180, 270
     min_roi_size: int = 8
     output_root: Path = PACKAGE_ROOT / "outputs" / "demo_runs"
@@ -24,3 +25,6 @@ class DemoConfig:
     cluster_containment_threshold: float = 0.80
     fragment_max_area_ratio: float = 0.60
     unresolved_min_score: float = 0.30
+    ctc_min_relative_probability: float = 0.5
+    onnx_rec_model_path: Path | None = None
+    onnx_rec_keys_path: Path | None = None

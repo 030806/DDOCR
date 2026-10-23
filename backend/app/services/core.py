@@ -17,6 +17,7 @@ from app.ocr.adapter import OcrAdapter
 from app.ocr.contracts import OcrAdapterProtocol
 from app.ocr.engine import TerminalOcrEngine
 from app.terminal_pair.client import TerminalPairClient
+from app.terminal_pair.match import terminal_pair_rows
 from app.repositories.auth import PasswordResetRepository, SessionRepository, TenantRepository, UserRepository
 from app.repositories.correction_comment import CommentRepository, CorrectionRepository
 from app.repositories.file_job import FileRepository, OCRJobRepository
@@ -203,13 +204,13 @@ class MockOcrService:
         digest = hashlib.pbkdf2_hmac("sha256", code.encode(), salt, 120_000)
         return f"{salt.hex()}${digest.hex()}"
 
-    def request_password_reset(self, phone: str, employee_no: str) -> dict[str, Any]:
+    def request_password_reset(self, phone: str) -> dict[str, Any]:
         result: dict[str, Any] = {
             "message": "如果账号信息匹配，重置验证码已生成",
             "expires_in": 600,
         }
         user = self.users.find_by_phone(phone.strip())
-        if not user or user.get("deleted") or user.get("employee_no") != employee_no.strip():
+        if not user or user.get("deleted"):
             return result
         code = f"{secrets.randbelow(1_000_000):06d}"
         self.password_resets.create(
@@ -373,7 +374,7 @@ class MockOcrService:
             "completed_pages": 0,
             "failed_pages": 0,
             "result_count": 0, "review_count": 0,
-            "options": body.options,
+            "options": {**body.options, "illumination": body.illumination},
             "deleted": False,
         }
         self.jobs.create(job)
@@ -413,6 +414,7 @@ class MockOcrService:
         if active_rerun:
             raise HTTPException(409, "This OCR job is already being recognized again")
 
+        illumination = body.illumination or source.get("options", {}).get("illumination", "none")
         previous_regions = self.region_jobs.context(source_job_id)
         if previous_regions:
             created = self.create_region_job(
@@ -426,6 +428,7 @@ class MockOcrService:
                             for region in previous_regions["regions"]
                         ],
                     )],
+                    illumination=illumination,
                 ),
                 owner_id,
                 rerun_source_job_id=source_job_id,
@@ -436,6 +439,7 @@ class MockOcrService:
                 file_id=source["file_id"],
                 model_id=body.model_id,
                 model_version=body.model_version,
+                illumination=illumination,
                 options={"rerun_source_job_id": source_job_id},
             ), owner_id)
         return created
@@ -527,6 +531,7 @@ class MockOcrService:
             "failed_pages": 0, "result_count": 0, "review_count": 0,
             "options": {
                 "recognition_scope": "regions",
+                "illumination": body.illumination,
                 **({"rerun_source_job_id": rerun_source_job_id} if rerun_source_job_id else {}),
             }, "deleted": False,
         }
@@ -955,17 +960,15 @@ class MockOcrService:
                     self.public_result(self.result(result_id))
                     for result_id in page["result_ids"]
                 ]
-                line_results = sorted(
-                    (item for item in line_results
-                     if item.get("review_status") not in {"deleted", "false_positive"}),
-                    key=lambda item: (item["bbox"][1], item["bbox"][0]),
-                )
-                count = max(len(page["terminal_points"]), len(line_results))
-                for index in range(count):
+                line_results = [
+                    item for item in line_results
+                    if item.get("review_status") not in {"deleted", "false_positive"}
+                ]
+                for terminal_number, item in terminal_pair_rows(page["terminal_points"], line_results):
                     pair_sheet.append([
                         page["page_no"],
-                        str(index + 1) if index < len(page["terminal_points"]) else "",
-                        line_results[index]["display_text"] if index < len(line_results) else "",
+                        terminal_number,
+                        item["display_text"] if item is not None else "",
                     ])
         workbook.save(export_path)
 

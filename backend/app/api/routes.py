@@ -71,7 +71,7 @@ def login(body: LoginCreate, request: Request) -> dict[str, Any]:
 
 @router.post("/auth/forgot-password", status_code=202)
 def forgot_password(body: ForgotPasswordCreate, request: Request) -> dict[str, Any]:
-    return envelope(service(request).request_password_reset(body.phone, body.employee_no))
+    return envelope(service(request).request_password_reset(body.phone))
 
 
 @router.post("/auth/reset-password", status_code=204)

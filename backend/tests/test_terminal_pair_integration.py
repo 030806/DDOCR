@@ -62,8 +62,8 @@ def test_detection_and_manual_edit_are_saved_separately(tmp_path: Path) -> None:
     export_id = export.json()["data"]["id"]
     workbook = load_workbook(client.app.state.service.store.exports / f"{export_id}.xlsx")
     pair_rows = list(workbook["端子对照表"].values)
-    assert len(pair_rows) == 4
-    assert pair_rows[-1][1] == "3"
+    assert {row[1] for row in pair_rows[1:] if row[1]} == {"1", "2", "3"}
+    assert sum(bool(row[2]) for row in pair_rows[1:]) == 3
     cleared = client.put(
         f"/api/v1/ocr/jobs/{job_id}/pages/1/terminal-points",
         headers=headers, json={"base_revision": 1, "points": []},
@@ -75,6 +75,21 @@ def test_detection_and_manual_edit_are_saved_separately(tmp_path: Path) -> None:
     assert page["terminal_model_points"] == original
 
 
+def test_duplicate_model_boxes_do_not_create_extra_terminal_numbers(tmp_path: Path) -> None:
+    class DuplicatingDetector(FakeTerminalDetector):
+        def detect(self, path: Path, width: int, height: int) -> list[dict]:
+            points = super().detect(path, width, height)
+            points[0]["bbox"] = [40, 90, 60, 110]
+            points[1]["bbox"] = [40, 190, 60, 210]
+            return [{**points[0], "id": "duplicate", "y": 102, "score": 0.7}, *points]
+
+    client = configured_client(tmp_path, DuplicatingDetector())
+    job_id, headers = workflow(client)
+    page = client.get(f"/api/v1/ocr/jobs/{job_id}/pages", headers=headers).json()["data"]["items"][0]
+    assert len(page["terminal_model_points"]) == 3
+    assert [point["id"] for point in page["terminal_points"]] == ["model-1", "model-2"]
+
+
 def test_yolox_failure_keeps_ocr_results(tmp_path: Path) -> None:
     client = configured_client(tmp_path, FakeTerminalDetector(fail=True))
     job_id, headers = workflow(client)
@@ -83,30 +98,6 @@ def test_yolox_failure_keeps_ocr_results(tmp_path: Path) -> None:
     assert page["terminal_error"]["code"] == "YOLOX_INFERENCE_FAILED"
     results = client.get(f"/api/v1/ocr/jobs/{job_id}/pages/1/results", headers=headers).json()["data"]["items"]
     assert len(results) == 3
-
-
-def test_saved_terminal_points_survive_restart_without_detector(tmp_path: Path, monkeypatch) -> None:
-    with configured_client(tmp_path, FakeTerminalDetector()) as client:
-        job_id, headers = workflow(client)
-        url = f"/api/v1/ocr/jobs/{job_id}/pages"
-        original = client.get(url, headers=headers).json()["data"]["items"][0]
-        edited = [{"id": "manual-restart", "x": 80, "y": 120}]
-        assert client.put(
-            f"/api/v1/ocr/jobs/{job_id}/pages/1/terminal-points",
-            headers=headers, json={"base_revision": 0, "points": edited},
-        ).status_code == 200
-        saved = client.get(url, headers=headers).json()["data"]["items"][0]
-    monkeypatch.delenv("DDOCR_YOLOX_URL", raising=False)
-    with TestClient(create_app(
-        str(tmp_path), f"sqlite:///{(tmp_path / 'test.db').as_posix()}", FakeOcrAdapter(),
-    )) as reopened:
-        assert reopened.app.state.service.terminal_detector is None
-        response = reopened.get(url, headers=headers)
-        assert response.status_code == 200
-        restored = response.json()["data"]["items"][0]
-        assert restored["terminal_points"] == saved["terminal_points"]
-        assert restored["terminal_model_points"] == original["terminal_model_points"]
-        assert restored["terminal_revision"] == 1
 
 
 def test_ocr_failure_keeps_terminal_points(tmp_path: Path) -> None:

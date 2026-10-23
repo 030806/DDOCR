@@ -17,6 +17,7 @@ export type OcrPolygon = [
 export type OcrItem = {
   id: string
   text: string
+  rawText?: string
   score: number
   bbox: [number, number, number, number]
   polygon?: OcrPolygon
@@ -34,6 +35,7 @@ export type OcrItem = {
 }
 
 export type OcrReviewStatus = 'unreviewed' | 'confirmed' | 'false_positive' | 'deleted'
+export type IlluminationMode = 'none' | 'he' | 'clahe'
 
 export type TerminalPoint = {
   id: string

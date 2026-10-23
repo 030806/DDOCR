@@ -50,7 +50,7 @@ const viewMode = ref<'list' | 'table'>('list')
 const editing = createGridEditing(() => props.page.items, props.saveTable, props.saveCable, change => {
   if (props.editingDisabled) throw new Error('请先保存或退出端子点编辑，再修改表格')
   if (change.field === 'terminalNumber' && hasTerminalResult.value && !terminalRows.value.some(row => row.item?.id === change.id && row.hasTerminal)) {
-    throw new Error('该线号超出当前端子数量，请核对原图；确有漏检时，先补充并保存端子点')
+    throw new Error('该线号未匹配到端子点，请核对原图和位置；确有漏检时，先补充并保存端子点')
   }
 })
 function applyHistory(redo = false) { try { editing.history(redo) } catch (error) { message.warning((error as Error).message) } }

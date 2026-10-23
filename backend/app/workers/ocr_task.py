@@ -10,6 +10,7 @@ from PIL import Image
 
 from app.ocr.errors import OcrError
 from app.ocr.contracts import OcrRegion
+from app.terminal_pair.dedup import deduplicate_model_points
 from app.utils.common import now, uid
 
 if TYPE_CHECKING:
@@ -84,6 +85,7 @@ class OcrTaskWorker:
                         opened_image.load()
                         result = service.ocr_adapter.recognize_image(
                             opened_image.convert("RGB"), regions=regions,
+                            options=job.get("options", {}),
                         )
                 else:
                     result = service.ocr_adapter.recognize_file(
@@ -100,7 +102,7 @@ class OcrTaskWorker:
                     points = terminal_future.result()
                     terminal_result = {
                         "terminal_model_points": points,
-                        "terminal_points": points,
+                        "terminal_points": deduplicate_model_points(points),
                         "terminal_error": None,
                     }
                 except Exception as exc:

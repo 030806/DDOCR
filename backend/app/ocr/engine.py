@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from threading import Lock
 from typing import Any, TypeAlias
 
@@ -68,9 +69,13 @@ class TerminalOcrEngine:
         self,
         image: Image.Image,
         regions: Sequence[OcrRegion],
+        *,
+        illumination: str | None = None,
     ) -> Any:
         """Run OCR while holding the engine's exclusive lifecycle lock."""
 
+        if illumination is not None and illumination not in {"none", "he", "clahe"}:
+            raise ValueError("Unknown OCR illumination mode")
         with self._lock:
             engine = self._load_unlocked()
             try:
@@ -78,7 +83,8 @@ class TerminalOcrEngine:
                     engine,
                     image,
                     regions,
-                    self.settings,
+                    replace(self.settings, illumination=illumination)
+                    if illumination is not None else self.settings,
                 )
             except OcrInferenceError:
                 raise
@@ -152,8 +158,12 @@ class TerminalOcrEngine:
         config = DemoConfig(
             device=settings.device,
             scale=settings.scale,
+            illumination=settings.illumination,
             rotations=settings.rotations,
             code_library_path=settings.code_library,
+            ctc_min_relative_probability=settings.ctc_min_relative_probability,
+            onnx_rec_model_path=settings.onnx_rec_model_path,
+            onnx_rec_keys_path=settings.onnx_rec_keys_path,
         )
         if settings.backend == "onnx":
             try:
@@ -181,7 +191,6 @@ class TerminalOcrEngine:
     ) -> Any:
         """Invoke the demo pipeline for the retained real engine."""
 
-        del settings
         try:
             from app.vendor.terminal_ocr_demo.models import ROI
             from app.vendor.terminal_ocr_demo.pipeline import run_pipeline
@@ -200,4 +209,7 @@ class TerminalOcrEngine:
         config = getattr(engine, "config", None)
         if config is None:
             raise OcrInferenceError("Terminal OCR engine has no demo configuration")
-        return run_pipeline(image, demo_regions, engine, config)
+        return run_pipeline(
+            image, demo_regions, engine,
+            replace(config, illumination=settings.illumination),
+        )

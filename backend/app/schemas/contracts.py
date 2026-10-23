@@ -16,11 +16,13 @@ class JobCreate(BaseModel):
     model_version: str
     pages: list[int] | None = None
     options: dict[str, Any] = Field(default_factory=dict)
+    illumination: Literal["none", "he", "clahe"] = "none"
 
 
 class JobRerunCreate(BaseModel):
     model_id: str
     model_version: str
+    illumination: Literal["none", "he", "clahe"] | None = None
 
 
 class RegionJobRegionCreate(BaseModel):
@@ -40,6 +42,7 @@ class RegionJobCreate(BaseModel):
     model_id: str
     model_version: str
     pages: list[RegionJobPageCreate] = Field(min_length=1, max_length=1)
+    illumination: Literal["none", "he", "clahe"] = "none"
 
 
 class CorrectionCreate(BaseModel):
@@ -146,7 +149,6 @@ class PasswordChange(BaseModel):
 
 class ForgotPasswordCreate(BaseModel):
     phone: str = Field(min_length=7, max_length=30)
-    employee_no: str = Field(min_length=1, max_length=40)
 
 
 class PasswordResetCreate(BaseModel):
