@@ -77,4 +77,28 @@ describe('terminal-pair table rows', () => {
     expect(rows.find(row => row.terminalNumber === '2')?.item?.id).toBe('other')
     expect(rows.find(row => row.item?.id === 'far')).toMatchObject({ terminalNumber: '', hasTerminal: false, requiresTerminalReview: true })
   })
+
+  it('falls back to box centers when slanted projections reverse adjacent lines', () => {
+    const upper = { ...line('upper', 135), bbox: [100, 135, 200, 155] as OcrItem['bbox'],
+      polygon: [[100, 145], [200, 135], [200, 145], [100, 155]] as OcrItem['polygon'] }
+    const lower = { ...line('lower', 145), bbox: [100, 145, 200, 165] as OcrItem['bbox'],
+      polygon: [[100, 145], [200, 155], [200, 165], [100, 155]] as OcrItem['polygon'] }
+    const points = [{ ...point('a', 100), x: 50 }, { ...point('b', 200), x: 50 }]
+    expect(terminalTableRows(points, [lower, upper]).filter(row => row.hasTerminal)
+      .map(row => [row.terminalNumber, row.item?.id])).toEqual([['1', 'upper'], ['2', 'lower']])
+  })
+
+  it('rejects a polygon extrapolation that reaches too far beyond the OCR box', () => {
+    const slanted = { ...line('slanted', 150), bbox: [100, 150, 200, 190] as OcrItem['bbox'],
+      polygon: [[100, 150], [200, 180], [200, 190], [100, 160]] as OcrItem['polygon'] }
+    const points = [{ ...point('a', 100), x: 0 }, { ...point('b', 200), x: 0 }]
+    expect(terminalTableRows(points, [slanted]).find(row => row.item?.id === 'slanted')?.terminalNumber).toBe('2')
+  })
+
+  it('retains a small slope correction near the boundary between two terminals', () => {
+    const slanted = { ...line('slanted', 139), bbox: [100, 139, 200, 159] as OcrItem['bbox'],
+      polygon: [[100, 149], [200, 139], [200, 149], [100, 159]] as OcrItem['polygon'] }
+    const points = [{ ...point('a', 100), x: 50 }, { ...point('b', 200), x: 50 }]
+    expect(terminalTableRows(points, [slanted]).find(row => row.item?.id === 'slanted')?.terminalNumber).toBe('2')
+  })
 })

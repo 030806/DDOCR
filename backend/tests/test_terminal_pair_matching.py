@@ -34,6 +34,38 @@ def test_competing_lines_do_not_reassign_to_second_nearest_point():
     ]
 
 
+def test_crossing_polygon_projections_fall_back_to_box_centers():
+    upper = {"id": "upper", "bbox": [100, 135, 200, 155],
+             "polygon": [[100, 145], [200, 135], [200, 145], [100, 155]]}
+    lower = {"id": "lower", "bbox": [100, 145, 200, 165],
+             "polygon": [[100, 145], [200, 155], [200, 165], [100, 155]]}
+    rows = terminal_pair_rows([point("a", 100), point("b", 200)], [lower, upper])
+    assert [(number, item["id"] if item else "") for number, item in rows] == [
+        ("1", "upper"), ("2", "lower"),
+    ]
+
+
+def test_excessive_polygon_extrapolation_uses_box_center():
+    slanted = {"id": "slanted", "bbox": [100, 150, 200, 190],
+               "polygon": [[100, 150], [200, 180], [200, 190], [100, 160]]}
+    terminals = [point("a", 100), point("b", 200)]
+    for terminal in terminals:
+        terminal["x"] = 0
+    rows = terminal_pair_rows(terminals, [slanted])
+    assert [(number, item["id"] if item else "") for number, item in rows] == [
+        ("1", ""), ("2", "slanted"),
+    ]
+
+
+def test_small_polygon_correction_can_resolve_boundary_ambiguity():
+    slanted = {"id": "slanted", "bbox": [100, 139, 200, 159],
+               "polygon": [[100, 149], [200, 139], [200, 149], [100, 159]]}
+    rows = terminal_pair_rows([point("a", 100), point("b", 200)], [slanted])
+    assert [(number, item["id"] if item else "") for number, item in rows] == [
+        ("1", ""), ("2", "slanted"),
+    ]
+
+
 def test_equal_height_points_are_numbered_left_to_right():
     left, right = point("left", 100), point("right", 100)
     left["x"], right["x"] = 20, 80
