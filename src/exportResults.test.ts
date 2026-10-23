@@ -41,3 +41,8 @@ describe('OCR Excel export rows', () => {
     expect(createFullExportRows(excluded)).toEqual([])
   })
 })
+
+it('exports explicit business blanks without regenerating terminal numbers', async () => {
+  const { createBusinessExportRows } = await import('./exportResults')
+  expect(createBusinessExportRows([{ id: 'business', text: 'OLD', corrected: '', terminalNumber: '', score: 1, bbox: [0, 0, 4, 4], comments: [] }])).toEqual([{ 端子号: '', 线号: '', 备注: '', 人工确认: '否' }])
+})

@@ -468,3 +468,11 @@ audit_logs = Table(
 )
 Index("ix_audit_logs_tenant_created", audit_logs.c.tenant_id, audit_logs.c.created_at)
 Index("ix_audit_logs_resource", audit_logs.c.resource_type, audit_logs.c.resource_id)
+
+
+terminal_documents = Table(
+    "terminal_documents", Base.metadata,
+    Column("page_id", String(36), ForeignKey("pages.id", ondelete="CASCADE"), primary_key=True),
+    Column("revision", Integer, nullable=False, server_default="0"),
+    Column("records", JSON_VALUE, nullable=False),
+)

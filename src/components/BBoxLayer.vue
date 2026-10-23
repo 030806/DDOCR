@@ -183,7 +183,7 @@ function finishDrawing() {
     <v-layer v-if="page.terminalPoints">
       <v-circle v-for="point in page.terminalPoints" :key="point.id"
         :config="{ ...terminalCanvasPoint(point), radius: selectedTerminalId === point.id ? 6 : 4.5,
-          fill: '#1677ff', stroke: '#ffffff', strokeWidth: 1.5,
+          fill: selectedTerminalId === point.id ? '#fa8c16' : '#1677ff', stroke: '#ffffff', strokeWidth: 1.5,
           draggable: Boolean(terminalEditMode), hitStrokeWidth: 10 }"
         @mousedown="$event.cancelBubble = true"
         @click="emit('terminalSelect', point.id)"

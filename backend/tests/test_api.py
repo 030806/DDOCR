@@ -699,3 +699,139 @@ def test_rerun_job_reuses_file_and_hides_source_from_default_list(tmp_path: Path
         headers=owner_headers,
         json={"model_id": "mock", "model_version": "1.0.0"},
     ).status_code == 409
+
+
+def test_terminal_record_is_bound_editable_and_idempotent(tmp_path):
+    test_client = client(tmp_path)
+    job_id, headers = workflow(test_client)
+    response = test_client.put(f"/api/v1/ocr/jobs/{job_id}/pages/1/terminal-points", headers=headers,
+                               json={"base_revision": 0, "points": [{"id": "draft", "x": 100, "y": 100}]})
+    assert response.status_code == 200
+    point_id = response.json()["data"]["points"][0]["id"]
+    url = f"/api/v1/ocr/jobs/{job_id}/pages/1/terminal-records/{point_id}"
+    first = test_client.put(url, headers=headers)
+    assert first.status_code == 200
+    result_id = first.json()["data"]["id"]
+    assert test_client.put(url, headers=headers).json()["data"]["id"] == result_id
+    assert test_client.put(url.replace(point_id, "missing"), headers=headers).status_code == 404
+    saved = test_client.patch(f"/api/v1/ocr/results/{result_id}/table", headers=headers,
+                             json={"terminal_number": "X1", "table_note": "人工补录", "manual_confirmed": True, "base_revision": 0})
+    assert saved.status_code == 200
+    correction = test_client.post(f"/api/v1/ocr/results/{result_id}/corrections", headers=headers,
+                                  json={"corrected_text": "CABLE-1", "base_revision": 0})
+    assert correction.status_code == 201
+    rows = test_client.get(f"/api/v1/ocr/jobs/{job_id}/pages/1/results", headers=headers).json()["data"]["items"]
+    records = [r for r in rows if r["attributes"].get("terminal_point_id") == point_id]
+    assert len(records) == 1
+    assert records[0]["display_text"] == "CABLE-1"
+    assert records[0]["table_note"] == "人工补录"
+
+
+def test_terminal_document_isolates_values_and_atomically_corrects_source(tmp_path):
+    from copy import deepcopy
+    test_client = client(tmp_path)
+    job_id, headers = workflow(test_client)
+    prefix = f"/api/v1/ocr/jobs/{job_id}/pages/1"
+    points = test_client.put(prefix + "/terminal-points", headers=headers,
+                            json={"base_revision": 0, "points": [{"id": "draft", "x": 100, "y": 100}, {"id": "other", "x": 100, "y": 1200}]})
+    assert points.status_code == 200
+    original = test_client.get(prefix + "/results", headers=headers).json()["data"]["items"]
+    document = test_client.get(prefix + "/terminal-document", headers=headers).json()["data"]
+    assert len(document["records"]) >= 2
+    baseline = deepcopy(document["records"])
+    record = next(r for r in document["records"] if r["sourceResultId"])
+    source = next(r for r in original if r["id"] == record["sourceResultId"])
+    record["cable"] = "BUSINESS-ONLY"
+    record["manual"] = True
+    record["manualConfirmed"] = True
+    saved = test_client.put(prefix + "/terminal-document", headers=headers,
+                            json={"base_revision": 0, "records": document["records"]})
+    assert saved.status_code == 200
+    assert test_client.get(prefix + "/results", headers=headers).json()["data"]["items"] == original
+    export = test_client.post(f"/api/v1/ocr/jobs/{job_id}/exports", headers=headers,
+                             json={"format": "xlsx", "mode": "simple", "scope": "all_pages"}).json()["data"]
+    download = test_client.get(f"/api/v1/ocr/jobs/{job_id}/exports/{export['id']}/download", headers=headers)
+    workbook = load_workbook(BytesIO(download.content), read_only=True)
+    assert any(row[2] == "BUSINESS-ONLY" for row in workbook["端子对照表"].iter_rows(min_row=2, values_only=True))
+    independent = test_client.put(prefix + "/terminal-document", headers=headers, json={
+        "base_revision": 1, "records": saved.json()["data"]["records"],
+        "source": {"result_id": source["id"], "base_revision": source["revision"], "text": "SOURCE-ONLY"}})
+    assert independent.status_code == 200
+    assert next(r for r in independent.json()["data"]["records"] if r["id"] == record["id"])["cable"] == "BUSINESS-ONLY"
+    synced = test_client.put(prefix + "/terminal-document", headers=headers, json={
+        "base_revision": 2, "records": independent.json()["data"]["records"], "sync_record_id": record["id"],
+        "source": {"result_id": source["id"], "base_revision": source["revision"] + 1, "text": "BOTH"}})
+    assert synced.status_code == 200
+    current = synced.json()["data"]
+    row = next(r for r in current["records"] if r["id"] == record["id"])
+    assert row["cable"] == "BOTH" and row["manualConfirmed"] is False
+    bad = deepcopy(current["records"])
+    bad[0]["cable"] = "MUST-ROLLBACK"
+    conflict = test_client.put(prefix + "/terminal-document", headers=headers, json={
+        "base_revision": 3, "records": bad,
+        "source": {"result_id": source["id"], "base_revision": 0, "text": "BAD"}})
+    assert conflict.status_code == 409
+    reloaded = test_client.get(prefix + "/terminal-document", headers=headers).json()["data"]
+    assert reloaded["revision"] == 3
+    assert reloaded["records"][0]["cable"] != "MUST-ROLLBACK"
+    # Undo a whole source operation with another versioned correction; history is retained.
+    undone = test_client.put(prefix + "/terminal-document", headers=headers, json={
+        "base_revision": 3, "records": independent.json()["data"]["records"],
+        "source": {"result_id": source["id"], "base_revision": source["revision"] + 2, "text": "SOURCE-ONLY"}})
+    assert undone.status_code == 200
+    assert next(r for r in undone.json()["data"]["records"] if r["id"] == record["id"])["cable"] == "BUSINESS-ONLY"
+    assert len(test_client.get(prefix + "/results", headers=headers).json()["data"]["items"]) == len(original)
+    # Editing and undoing a previously empty business row never creates OCR evidence.
+    restored = test_client.put(prefix + "/terminal-document", headers=headers,
+                              json={"base_revision": 4, "records": baseline})
+    assert restored.status_code == 200
+    assert len(test_client.get(prefix + "/results", headers=headers).json()["data"]["items"]) == len(original)
+
+
+def test_list_correction_follows_only_unedited_business_and_keeps_value_after_source_deletion(tmp_path):
+    api = client(tmp_path)
+    job, headers = workflow(api)
+    prefix = f"/api/v1/ocr/jobs/{job}/pages/1"
+    api.put(prefix + "/terminal-points", headers=headers, json={"base_revision": 0, "points": [{"id": "p", "x": 100, "y": 100}]})
+    doc = api.get(prefix + "/terminal-document", headers=headers).json()["data"]
+    source_id = doc["records"][0]["sourceResultId"]
+    source = next(r for r in api.get(prefix + "/results", headers=headers).json()["data"]["items"] if r["id"] == source_id)
+    response = api.post(f"/api/v1/ocr/results/{source_id}/corrections", headers=headers,
+                        json={"base_revision": source["revision"], "corrected_text": "LIST-CORRECTED"})
+    assert response.status_code == 201
+    followed = api.get(prefix + "/terminal-document", headers=headers).json()["data"]
+    assert followed["records"][0]["cable"] == "LIST-CORRECTED"
+    assert followed["revision"] > doc["revision"]
+    api.post("/api/v1/ocr/results/review-status", headers=headers,
+              json={"result_ids": [source_id], "review_status": "deleted"})
+    after = api.get(prefix + "/terminal-document", headers=headers).json()["data"]
+    assert after["records"][0]["cable"] == "LIST-CORRECTED"
+    assert after["records"][0]["sourceUnavailable"] is True
+
+
+def test_business_cut_moves_source_association_and_undo_restores_it(tmp_path):
+    from copy import deepcopy
+    api = client(tmp_path)
+    job, headers = workflow(api)
+    prefix = f"/api/v1/ocr/jobs/{job}/pages/1"
+    api.put(prefix + "/terminal-points", headers=headers, json={"base_revision": 0, "points": [
+        {"id": "p", "x": 100, "y": 100}, {"id": "q", "x": 100, "y": 1500}]})
+    doc = api.get(prefix + "/terminal-document", headers=headers).json()["data"]
+    original = deepcopy(doc["records"])
+    source = next(r for r in doc["records"] if r["sourceResultId"])
+    target = next(r for r in doc["records"] if r["id"] != source["id"])
+    source_id, target_id, ocr_id, cable = source["id"], target["id"], source["sourceResultId"], source["cable"]
+    target.update(cable=cable, sourceResultId=ocr_id, sourceRevision=source["sourceRevision"], manual=True, manualConfirmed=False)
+    source.update(cable="", sourceResultId=None, sourceRevision=0, manual=True, manualConfirmed=False)
+    moved = api.put(prefix + "/terminal-document", headers=headers, json={"base_revision": doc["revision"], "records": doc["records"]})
+    assert moved.status_code == 200
+    saved = moved.json()["data"]
+    assert next(r for r in saved["records"] if r["id"] == source_id)["sourceResultId"] is None
+    assert next(r for r in saved["records"] if r["id"] == target_id)["sourceResultId"] == ocr_id
+    undone = api.put(prefix + "/terminal-document", headers=headers, json={"base_revision": saved["revision"], "records": original})
+    assert undone.status_code == 200
+    assert next(r for r in undone.json()["data"]["records"] if r["id"] == source_id)["sourceResultId"] == ocr_id
+    bad = deepcopy(undone.json()["data"])
+    bad["records"][0]["sourceResultId"] = "other-page-result"
+    assert api.put(prefix + "/terminal-document", headers=headers,
+                   json={"base_revision": bad["revision"], "records": bad["records"]}).status_code == 422

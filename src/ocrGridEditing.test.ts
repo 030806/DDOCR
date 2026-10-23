@@ -16,12 +16,12 @@ describe('grid clipboard and numbering', () => {
     expect(parseGridClipboard('a\t')).toEqual([['a', '']])
     expect(() => parseGridClipboard('"bad')).toThrow()
   })
-  it('keeps identifiers as text and rejects invalid confirmations and empty cables', () => {
+  it('keeps identifiers as text and rejects invalid confirmations and accepts blank cables', () => {
     expect(normalizeGridValue('cable', '=001')).toBe('=001')
     expect(normalizeGridValue('terminalNumber', '001')).toBe('001')
     expect(normalizeGridValue('manualConfirmed', '否')).toBe(false)
     expect(() => normalizeGridValue('manualConfirmed', 'maybe')).toThrow()
-    expect(() => normalizeGridValue('cable', ' ')).toThrow()
+    expect(normalizeGridValue('cable', ' ')).toBe('')
   })
   it('numbers in visible order, skips existing values without consuming a number', () => {
     const result = sequentialNumbers(['c', 'a', 'b'], id => id === 'a' ? 'existing' : '', { start: 1, step: 2, width: 3, prefix: 'XT-', suffix: 'L', overwrite: false })
@@ -58,7 +58,7 @@ describe('grid persistence and history', () => {
   })
   it('validates a batch before changing any drafts', () => {
     const { editing } = setup()
-    expect(() => editing.apply([{ id: 'a', field: 'terminalNumber', value: '001' }, { id: 'b', field: 'cable', value: '' }])).toThrow()
+    expect(() => editing.apply([{ id: 'a', field: 'terminalNumber', value: '001' }, { id: 'b', field: 'cable', value: 'x'.repeat(501) }])).toThrow()
     expect(editing.values('a').terminalNumber).toBe('')
     expect(editing.state.undo).toHaveLength(0)
   })
@@ -120,4 +120,17 @@ describe('grid persistence and history', () => {
     await Promise.resolve(); expect(table).toHaveBeenCalledTimes(4)
     gate.resolve(); await editing.flush(); expect(maximum).toBe(4)
   })
+})
+
+it('saves a cleared cable and supports undo and redo', async () => {
+  const { editing, items } = setup()
+  editing.apply([{ id: 'a', field: 'cable', value: '' }])
+  expect(await editing.flush()).toBe(true)
+  expect(items[0]!.corrected).toBe('')
+  editing.history()
+  expect(await editing.flush()).toBe(true)
+  expect(items[0]!.corrected).toBe('a')
+  editing.history(true)
+  expect(await editing.flush()).toBe(true)
+  expect(items[0]!.corrected).toBe('')
 })

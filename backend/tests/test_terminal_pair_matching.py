@@ -87,3 +87,11 @@ def test_dedup_never_removes_manual_points_or_boxless_detections():
     first = point("first", 100)
     manual = {**point("manual", 100), "source": "manual"}
     assert len(deduplicate_model_points([first, manual])) == 2
+
+
+def test_manual_record_keeps_point_binding_and_preserves_displaced_ocr():
+    manual = {**line("manual", 200), "attributes": {"terminal_point_id": "a"}}
+    rows = terminal_pair_rows([point("a", 100), point("b", 200)], [line("original", 100), manual])
+    assert next(item for number, item in rows if number == "1")["id"] == "manual"
+    assert next(item for number, item in rows if number == "2") is None
+    assert any(number == "" and item["id"] == "original" for number, item in rows)

@@ -102,3 +102,12 @@ describe('terminal-pair table rows', () => {
     expect(terminalTableRows(points, [slanted]).find(row => row.item?.id === 'slanted')?.terminalNumber).toBe('2')
   })
 })
+
+it('keeps manually recorded values bound to their terminal and preserves displaced OCR', () => {
+  const manual = { ...line('manual', 200), terminalPointId: 'a', corrected: 'C1' }
+  const original = line('original', 100)
+  const rows = terminalTableRows([point('a', 100), point('b', 200)], [original, manual])
+  expect(rows.find(row => row.hasTerminal && row.item?.id === 'manual')?.terminalNumber).toBe('1')
+  expect(rows.some(row => !row.hasTerminal && row.item?.id === 'original')).toBe(true)
+  expect(rows.find(row => row.terminalNumber === '2')?.item).toBeUndefined()
+})

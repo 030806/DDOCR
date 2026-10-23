@@ -575,3 +575,26 @@ def download(
     export_path = ocr_service.store.exports / f"{export_id}.xlsx"
     filename = f"ocr-{job_id}.xlsx"
     return FileResponse(export_path, filename=filename)
+
+
+@router.put("/ocr/jobs/{job_id}/pages/{page_no}/terminal-records/{point_id}")
+def ensure_terminal_record(job_id: str, page_no: int, point_id: str, request: Request,
+                           authorization: Annotated[str | None, Header()] = None) -> dict[str, Any]:
+    actor = authenticated_user(request, authorization)
+    return envelope(service(request).ensure_terminal_record(job_id, page_no, point_id, actor["id"]))
+
+
+from app.schemas.contracts import TerminalDocumentSave
+from app.services.terminal_document import TerminalDocumentService
+
+@router.get("/ocr/jobs/{job_id}/pages/{page_no}/terminal-document")
+def get_terminal_document(job_id: str, page_no: int, request: Request,
+                          authorization: Annotated[str | None, Header()] = None):
+    actor = authenticated_user(request, authorization)
+    return envelope(TerminalDocumentService(service(request)).get(job_id, page_no, actor["id"]))
+
+@router.put("/ocr/jobs/{job_id}/pages/{page_no}/terminal-document")
+def save_terminal_document(job_id: str, page_no: int, body: TerminalDocumentSave, request: Request,
+                           authorization: Annotated[str | None, Header()] = None):
+    actor = authenticated_user(request, authorization)
+    return envelope(TerminalDocumentService(service(request)).save(job_id, page_no, body, actor["id"]))

@@ -10,7 +10,7 @@ import type { IlluminationMode, ModelOption, OcrItem, OcrPage, OcrPolygon, OcrRe
 import { createComment, createCorrection, createRegionOcrTask, deleteComment, getModels, getOcrPages, releasePageImages, rerunOcrTask, saveResultEdits, saveTerminalPoints, updateComment, updateResultReviewStatus, updateResultTable, uploadAndCreateOcrTaskFromSelection, type RegionDraft } from '../api/ocr'
 import { createSplitLayout } from '../splitLayout'
 import { completeDatasetReview, getDatasetStatuses, type DatasetStatus } from '../api/dataset'
-import { exportOcrResults, type ExportMode } from '../exportResults'
+import { exportTerminalBusiness, exportOcrResults, type ExportMode } from '../exportResults'
 import UploadPanel from '../components/UploadPanel.vue'
 import DocumentViewer from '../components/DocumentViewer.vue'
 import OCRResultPanel from '../components/OCRResultPanel.vue'
@@ -51,6 +51,7 @@ const jobState = ref<JobState>('ready')
 const progress = ref(0)
 const taskLoading = ref(false)
 const correctionOpen = ref(false)
+const sourceCorrectionMode = ref(false)
 const correctionTargetId = ref('')
 const commentOpen = ref(false)
 const reviewSaving = ref(false)
@@ -61,6 +62,7 @@ const bboxSaving = ref(false)
 const workspaceWidth = ref(typeof window === 'undefined' ? 1440 : window.innerWidth)
 const workspace = ref<{ $el: HTMLElement }>()
 const resultPanel = ref<{
+  exportItems: () => OcrItem[] | undefined
   hasPendingEdits: () => boolean
   flushPendingEdits: () => Promise<boolean>
   syncCorrection: (resultId: string, correctedText: string) => void
@@ -239,6 +241,7 @@ async function loadCompletedTask(task: NonNullable<typeof polledTask.value>, seq
     const candidates = taskPages[currentPage.value - 1]?.items || []
     const reviewItem = route.query.action === 'review' ? candidates.find((item) => item.score < 0.95) : undefined
     selectedId.value = candidates.find(item => item.id === (route.query.result || position?.selectedId))?.id || (reviewItem || candidates[0])?.id || ''
+    if (typeof route.query.result === 'string' && route.query.result.startsWith('terminal:')) selectItem(route.query.result)
     jobState.value = 'done'
     progress.value = 100
     emit('completed', task.id, taskPages.length)
@@ -317,6 +320,8 @@ watch([taskLoading, page], async ([loading, activePage]) => {
 })
 
 function selectItem(id: string) {
+  if (id.startsWith('terminal:')) { selectedTerminalId.value = id.slice('terminal:'.length); selectedId.value = ''; return }
+  selectedTerminalId.value = ''
   if (pendingGeometrySnapshot.value && pendingGeometryId.value !== id) {
     message.warning('请先确认或取消当前检测框修改')
     return
@@ -735,6 +740,7 @@ async function submitRegionJob(name: string, regions: RegionDraft[]) {
 }
 
 function openCorrection(item: OcrItem) {
+  sourceCorrectionMode.value = false
   if (item.id.startsWith('draft-')) {
     message.warning('请先保存新增检测框，再纠正识别文字')
     return
@@ -742,6 +748,11 @@ function openCorrection(item: OcrItem) {
   selectItem(item.id)
   correctionTargetId.value = item.id
   correctionOpen.value = true
+}
+
+function openSourceCorrection(item: OcrItem) {
+  openCorrection(item)
+  sourceCorrectionMode.value = true
 }
 
 function applySavedCorrection(resultId: string, correctedText: string, revision: number) {
@@ -868,7 +879,10 @@ async function handleExport(mode: ExportMode) {
     // TODO(integration): Use the backend export job/download endpoints so exports
     // include server-side corrections and comments from every requested page.
     if (!page.value) return
-    await exportOcrResults(page.value.items, mode, page.value.no, page.value.terminalPoints)
+    if (!await resultPanel.value?.flushPendingEdits()) { message.warning('请先完成保存'); return }
+    const business = resultPanel.value?.exportItems()
+    if (business) await exportTerminalBusiness(business, mode, page.value.no)
+    else await exportOcrResults(page.value.items.filter(item => !item.terminalPointId), mode, page.value.no)
     message.success(mode === 'simple' ? '精简结果已导出' : '完整结果已导出')
   } catch { message.error('导出失败，请重试') }
 }
@@ -890,7 +904,7 @@ async function handleExport(mode: ExportMode) {
         </div>
       </Pane>
       <Pane :size="splitLayout.resultSizePercent" :min-size="splitLayout.resultMinPercent">
-        <OCRResultPanel v-if="resultPanelPage" ref="resultPanel" :save-table="saveTableCell" :save-cable="saveCableCell" :editing-disabled="terminalEditMode" :page="resultPanelPage" :pages="pages" :selected-id="selectedId" :model-label="currentModel?.label || selectedModel" :low-confidence-threshold="settings.lowConfidenceThreshold" :show-confidence="settings.showConfidence" :can-undo-review="Boolean(lastReviewAction)" :dataset-reviewed="Boolean(datasetReviewed)" :dataset-review-saving="datasetReviewSaving" :dataset-review-disabled="jobState !== 'done' || taskLoading || reviewSaving || resultMutationSaving || bboxSaving || terminalSaving || terminalDirty || correctionOpen || manualTextOpen || Boolean(pendingGeometrySnapshot)" @complete-review="finishDatasetReview" @select="selectItem" @correct="openCorrection" @comment="openComment" @export="handleExport" @review="reviewResults" @visible-change="visibleResultIds = $event" @undo="undoReviewAction" />
+        <OCRResultPanel v-if="resultPanelPage" ref="resultPanel" :selected-terminal-id="selectedTerminalId" :save-table="saveTableCell" :save-cable="saveCableCell" :editing-disabled="terminalEditMode" :page="resultPanelPage" :pages="pages" :selected-id="selectedId" :model-label="currentModel?.label || selectedModel" :low-confidence-threshold="settings.lowConfidenceThreshold" :show-confidence="settings.showConfidence" :can-undo-review="Boolean(lastReviewAction)" :dataset-reviewed="Boolean(datasetReviewed)" :dataset-review-saving="datasetReviewSaving" :dataset-review-disabled="jobState !== 'done' || taskLoading || reviewSaving || resultMutationSaving || bboxSaving || terminalSaving || terminalDirty || correctionOpen || manualTextOpen || Boolean(pendingGeometrySnapshot)" @complete-review="finishDatasetReview" @select="selectItem" @correct="openCorrection" @correct-source="openSourceCorrection" @select-terminal="id => { selectedTerminalId = id; selectedId = '' }" @business-changed="invalidateDatasetReview" @select-business="selection => { selectItem(selection.sourceId); selectedTerminalId = selection.pointId }" @comment="openComment" @export="handleExport" @review="reviewResults" @visible-change="visibleResultIds = $event" @undo="undoReviewAction" />
       </Pane>
     </Splitpanes>
     <div v-else class="workspace-empty">
@@ -899,7 +913,7 @@ async function handleExport(mode: ExportMode) {
       <p>请选择历史任务，或上传文件创建 OCR 任务。</p>
       <button @click="router.push('/tasks')">查看历史任务</button>
     </div>
-    <CorrectionModal v-model:open="correctionOpen" :item="correctionTarget" :saving="reviewSaving" @save="saveCorrection" />
+    <CorrectionModal v-model:open="correctionOpen" :item="correctionTarget" :source-mode="sourceCorrectionMode" :image-url="page?.imageUrl" :source-width="page?.sourceWidth" :source-height="page?.sourceHeight" :saving="reviewSaving" @save="saveCorrection" />
     <CommentDrawer v-model:open="commentOpen" :item="selectedItem" :current-user-id="user?.id" :saving="reviewSaving" @save="saveComment" @update-comment="editComment" @delete-comment="removeComment" />
     <UploadPreviewModal :open="uploadPreviewOpen" :file="pendingFile" :initial-regions="pendingFile === selectedFile ? selectedRegions : []" @close="uploadPreviewOpen = false" @delete="deleteUpload" @save="saveUpload" />
     <RegionJobModal

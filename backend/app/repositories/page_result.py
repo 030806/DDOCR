@@ -174,15 +174,18 @@ class OCRResultRepository:
                 })
 
             max_order = db.scalar(select(func.max(results.c.reading_order)).where(results.c.page_id == page["id"])) or 0
-            result_ids = list(page["result_ids"])
+            result_ids = list(db.scalar(select(pages.c.result_ids).where(pages.c.id == page["id"])) or [])
             for index, item in enumerate(creates, 1):
+                if item.get("terminal_point_id") and db.scalar(select(results.c.id).where(results.c.id == item["id"])):
+                    created_items.append({"client_id": item["client_id"], "id": item["id"]})
+                    continue
                 bbox = list(item["bbox"])
                 db.execute(insert(results).values(
                     id=item["id"], job_id=page["job_id"], page_id=page["id"], page_no=page["page_no"],
                     type="text_line", text=item["text"], confidence=1.0,
                     bbox=bbox, bbox_x1=bbox[0], bbox_y1=bbox[1], bbox_x2=bbox[2], bbox_y2=bbox[3],
                     polygon=item["polygon"],
-                    reading_order=max_order + index, attributes={"source": "manual"},
+                    reading_order=max_order + index, attributes={"source": "manual", **({"terminal_point_id": item["terminal_point_id"]} if item.get("terminal_point_id") else {})},
                     current_revision=0, current_correction=None, review_status="unreviewed", geometry_revision=0,
                 ))
                 db.execute(insert(result_geometry_revisions).values(

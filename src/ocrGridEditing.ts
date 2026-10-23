@@ -4,9 +4,9 @@ import type { OcrItem } from './types/ocr'
 export const gridFields = ['terminalNumber', 'cable', 'manualConfirmed', 'tableNote'] as const
 export type GridField = typeof gridFields[number]
 export type GridValues = Record<Exclude<GridField, 'manualConfirmed'>, string> & { manualConfirmed: boolean }
-export type GridChange = { id: string; field: GridField; value: string | boolean }
+export type GridChange = { id: string; field: GridField; value: string | boolean; clearSource?: boolean }
 type Change = GridChange & { before: string | boolean }
-export const itemValues = (item: OcrItem): GridValues => ({ terminalNumber: item.terminalNumber || '', cable: item.corrected || item.text, manualConfirmed: !!item.manualConfirmed, tableNote: item.tableNote || '' })
+export const itemValues = (item: OcrItem): GridValues => ({ terminalNumber: item.terminalNumber || '', cable: item.corrected ?? item.text, manualConfirmed: !!item.manualConfirmed, tableNote: item.tableNote || '' })
 
 export function parseGridClipboard(text: string): string[][] {
   const rows: string[][] = [[]]
@@ -35,7 +35,6 @@ export function normalizeGridValue(field: GridField, value: unknown): string | b
     throw new Error('人工确认请填写 是/否、true/false 或 1/0')
   }
   const text = String(value ?? '').trim()
-  if (field === 'cable' && !text.trim()) throw new Error('线缆编号不能为空')
   if (text.length > (field === 'tableNote' ? 1000 : 500)) throw new Error('输入超过字段长度限制')
   return text
 }

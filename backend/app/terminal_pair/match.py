@@ -75,6 +75,10 @@ def terminal_pair_rows(
     ordered_points = sorted(points, key=lambda p: (p["y"], p["x"], str(p["id"])))
     winners: dict[str, tuple[dict[str, Any], tuple[float, float, str]]] = {}
     unmatched: list[dict[str, Any]] = []
+    point_ids = {str(point["id"]) for point in ordered_points}
+    bound = {str(item.get("attributes", {}).get("terminal_point_id")): item for item in items
+             if str(item.get("attributes", {}).get("terminal_point_id")) in point_ids}
+    items = [item for item in items if str(item.get("attributes", {}).get("terminal_point_id")) not in point_ids]
     pitch = _terminal_pitch(ordered_points)
     proposals = [(item, *_nearest_point(item, ordered_points, pitch)) for item in items] if ordered_points else []
     use_center = _assignments_cross(proposals)
@@ -93,10 +97,13 @@ def terminal_pair_rows(
                 unmatched.append(incumbent[0])
             winners[key] = item, rank
 
+    for key, (item, _) in winners.items():
+        if key in bound:
+            unmatched.append(item)
     rows: list[tuple[float, int, float, str, str, dict[str, Any] | None]] = []
     for index, point in enumerate(ordered_points, start=1):
         rows.append((float(point["y"]), 0, float(point["x"]), str(point["id"]), str(index),
-                     winners.get(str(point["id"]), (None, None))[0]))
+                     bound.get(str(point["id"])) or winners.get(str(point["id"]), (None, None))[0]))
     for item in unmatched:
         center_x, center_y = _center(item)
         rows.append((center_y, 1, center_x, str(item["id"]), "", item))

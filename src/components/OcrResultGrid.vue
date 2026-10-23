@@ -4,15 +4,20 @@ import { UndoOutlined, RedoOutlined, VerticalAlignBottomOutlined, OrderedListOut
 import { TabulatorFull as Tabulator, type CellComponent, type ColumnDefinition } from 'tabulator-tables'
 import 'tabulator-tables/dist/css/tabulator.min.css'
 import type { OcrItem } from '../types/ocr'
+import { sourceCorrectionUnavailable } from '../sourceCorrection'
+import { BUSINESS_CLIPBOARD, type BusinessClipboard } from '../businessClipboard'
 import { gridTerminalNumber } from '../terminalPairTable'
 import { gridFields, normalizeGridValue, parseGridClipboard, sequentialNumbers, type GridChange, type GridField, type GridValues } from '../ocrGridEditing'
 
-type GridRow = GridValues & { id: string; index: number; item?: OcrItem; status: string; selected: boolean; hasTerminal: boolean; requiresTerminalReview: boolean }
+type GridRow = GridValues & { id: string; index: number; item?: OcrItem; status: string; selected: boolean; hasTerminal: boolean; requiresTerminalReview: boolean; sourceAction: string }
 const props = defineProps<{
   rows: { selectionId: string; terminalNumber: string; item?: OcrItem; hasTerminal: boolean; requiresTerminalReview: boolean }[]
   terminalCount?: number
   modelTerminalCount?: number | null
   editingDisabled?: boolean
+  clipboardScope?: string
+  clipboardSource?: (id: string) => BusinessClipboard['rows'][number]
+  sourceReason?: (item?: OcrItem) => string
   selectedId: string
   selectedIds: string[]
   values: (id: string) => GridValues
@@ -28,6 +33,8 @@ const emit = defineEmits<{
   undo: []
   redo: []
   retry: [id: string]
+  correctSource: [item: OcrItem]
+  transfer: [payload: BusinessClipboard, targets: string[]]
 }>()
 const host = ref<HTMLDivElement>()
 const expanded = ref(false)
@@ -109,6 +116,7 @@ function rowData(): GridRow[] {
     terminalNumber: gridTerminalNumber(row, row.item ? props.values(row.item.id).terminalNumber : ''),
     id: row.selectionId, item: row.item, index: index + 1, status: props.statuses[row.item?.id || ''] || '已保存', selected: props.selectedIds.includes(row.selectionId),
     hasTerminal: row.hasTerminal, requiresTerminalReview: row.requiresTerminalReview,
+    sourceAction: props.sourceReason ? props.sourceReason(row.item) : sourceCorrectionUnavailable(row.item),
   }))
 }
 function editable(cell: CellComponent) {
@@ -135,17 +143,26 @@ function paste(event: ClipboardEvent) {
     const rows = table.getRows('active'), columns = table.getColumns()
     const r = rows.indexOf(first.getRow()), c = columns.indexOf(first.getColumn())
     if (r + matrix.length > rows.length || c + Math.max(...matrix.map(row => row.length)) > columns.length) throw new Error('粘贴超出表格范围，未应用任何修改')
+    const internal = event.clipboardData?.getData(BUSINESS_CLIPBOARD)
+    if (internal && props.clipboardScope && first.getField() === 'cable') {
+      const payload = JSON.parse(internal) as BusinessClipboard
+      if (payload.scope === props.clipboardScope && payload.rows.length === matrix.length && matrix.every(line => line.length === 1)) {
+        if (props.editingDisabled) throw new Error('请先完成当前保存')
+        emit('transfer', payload, rows.slice(r, r + matrix.length).map(row => String(row.getIndex())))
+        return
+      }
+    }
     const changes: GridChange[] = []; let skipped = 0
     matrix.forEach((line, y) => line.forEach((value, x) => {
       const cell = rows[r + y]!.getCell(columns[c + x]!.getField())
       if (!cell || !gridFields.includes(cell.getField() as GridField) || !editable(cell)) { skipped++; return }
       const row = cell.getRow().getData() as GridRow
-      changes.push({ id: row.item!.id, field: cell.getField() as GridField, value: normalizeGridValue(cell.getField() as GridField, value) })
+      changes.push({ id: row.item!.id, field: cell.getField() as GridField, value: normalizeGridValue(cell.getField() as GridField, value), clearSource: !!props.clipboardScope && cell.getField() === 'cable' })
     }))
     submit(changes, skipped)
   } catch (error) { feedback.value = (error as Error).message }
 }
-function copy(event: ClipboardEvent) {
+function copy(event: ClipboardEvent, cut = false) {
   if ((event.target as HTMLElement).closest('input,textarea,[contenteditable=true]')) return
   const cells = rangeCells()
   if (!cells.length) return
@@ -155,10 +172,25 @@ function copy(event: ClipboardEvent) {
     return /[\t\r\n"]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
   }
   event.clipboardData?.setData('text/plain', cells.map(row => row.map(cell => escape(cell.getValue())).join('\t')).join('\r\n'))
+  if (props.clipboardScope && props.clipboardSource && cells.every(row => row.length === 1 && row[0]!.getField() === 'cable')) {
+    const payload: BusinessClipboard = { scope: props.clipboardScope, cut, rows: cells.map(row => props.clipboardSource!(String(row[0]!.getRow().getIndex()))) }
+    event.clipboardData?.setData(BUSINESS_CLIPBOARD, JSON.stringify(payload))
+    feedback.value = cut ? '已标记剪切；粘贴成功后清空源编号和来源关联' : '已复制编号及识别来源'
+  }
+}
+function cut(event: ClipboardEvent) {
+  if (!props.clipboardScope || props.editingDisabled) return
+  copy(event, true)
 }
 function fillDown() {
   const cells = rangeCells(), changes: GridChange[] = []; let skipped = 0
   if (cells.length < 2) { feedback.value = '请选择至少两行单元格，以第一行向下填充'; return }
+  if (props.clipboardScope && props.clipboardSource && cells.every(row => row.length === 1 && row[0]!.getField() === 'cable')) {
+    if (props.editingDisabled) return
+    const source = props.clipboardSource(String(cells[0]![0]!.getRow().getIndex()))
+    emit('transfer', { scope: props.clipboardScope, cut: false, rows: cells.slice(1).map(() => ({ ...source })) }, cells.slice(1).map(row => String(row[0]!.getRow().getIndex())))
+    return
+  }
   cells.slice(1).forEach(row => row.forEach((cell, index) => {
     if (!gridFields.includes(cell.getField() as GridField) || !editable(cell)) { skipped++; return }
     changes.push({ id: (cell.getRow().getData() as GridRow).item!.id, field: cell.getField() as GridField, value: cells[0]![index]!.getValue() })
@@ -241,7 +273,7 @@ function refresh() {
       const existing = table.getRow(row.id)
       if (existing) {
         const patch: Partial<GridRow> = {}
-        for (const key of ['terminalNumber', 'cable', 'manualConfirmed', 'tableNote', 'status', 'selected', 'index', 'hasTerminal', 'requiresTerminalReview'] as const) if (existing.getData()[key] !== row[key]) Object.assign(patch, { [key]: row[key] })
+        for (const key of ['terminalNumber', 'cable', 'manualConfirmed', 'tableNote', 'status', 'selected', 'index', 'hasTerminal', 'requiresTerminalReview', 'sourceAction'] as const) if (existing.getData()[key] !== row[key]) Object.assign(patch, { [key]: row[key] })
         if (Object.keys(patch).length) void existing.update(patch)
         if ('requiresTerminalReview' in patch) {
           const cell = existing.getCell('terminalNumber')
@@ -283,6 +315,16 @@ onMounted(() => {
       } },
       { title: '人工确认', field: 'manualConfirmed', width: 100, headerSort: false, formatter(cell) { const input = document.createElement('input'); input.type = 'checkbox'; input.checked = !!cell.getValue(); input.disabled = !editable(cell); input.style.pointerEvents = 'none'; return input }, cellClick(_event, cell) { if (editable(cell)) submit([{ id: (cell.getRow().getData() as GridRow).item!.id, field: 'manualConfirmed', value: !cell.getValue() }]) } },
       textColumn('备注', 'tableNote', 150),
+      { title: '来源', field: 'sourceAction', width: 130, headerSort: false, formatter(cell) {
+        const item = (cell.getRow().getData() as GridRow).item
+        const reason = props.sourceReason ? props.sourceReason(item) : sourceCorrectionUnavailable(item)
+        const button = document.createElement('button')
+        button.textContent = '纠正来源文字'
+        button.title = reason || '查看图片识别框并纠正识别文字'
+        button.disabled = !!reason || !!props.editingDisabled
+        button.addEventListener('click', event => { event.stopPropagation(); if (item && !reason && !props.editingDisabled) emit('correctSource', item) })
+        return button
+      } },
     ],
     rowFormatter(row) { const data = row.getData() as GridRow; if (data.item) row.getElement().dataset.resultId = data.item.id; row.getElement().classList.toggle('ocr-linked-row', data.item?.id === props.selectedId) },
   })
@@ -294,6 +336,7 @@ onMounted(() => {
   table.on('cellEdited', cell => { if (!syncing) submit([{ id: (cell.getRow().getData() as GridRow).item!.id, field: cell.getField() as GridField, value: cell.getValue() }]) })
   host.value!.addEventListener('paste', paste, true)
   host.value!.addEventListener('copy', copy, true)
+  host.value!.addEventListener('cut', cut, true)
   host.value!.addEventListener('keydown', keydown, true)
   host.value!.addEventListener('mousedown', selectionMouseDown, true)
   document.addEventListener('mouseup', selectionMouseUp)
@@ -305,7 +348,7 @@ watch(() => props.selectedId, id => {
   if (built && row) void row.scrollTo('nearest', false)
 })
 watch(expanded, async () => { await nextTick(); table?.redraw(true) })
-onBeforeUnmount(() => { built = false; host.value?.removeEventListener('paste', paste, true); host.value?.removeEventListener('copy', copy, true); host.value?.removeEventListener('keydown', keydown, true); host.value?.removeEventListener('mousedown', selectionMouseDown, true); document.removeEventListener('mouseup', selectionMouseUp); table?.destroy() })
+onBeforeUnmount(() => { built = false; host.value?.removeEventListener('paste', paste, true); host.value?.removeEventListener('copy', copy, true); host.value?.removeEventListener('cut', cut, true); host.value?.removeEventListener('keydown', keydown, true); host.value?.removeEventListener('mousedown', selectionMouseDown, true); document.removeEventListener('mouseup', selectionMouseUp); table?.destroy() })
 </script>
 
 <template>
@@ -328,6 +371,7 @@ onBeforeUnmount(() => { built = false; host.value?.removeEventListener('paste', 
     <details class="ocr-grid-help">
       <summary>操作帮助</summary>
       <p>双击编辑；Tab 左右、Enter 上下；拖选区域后 Ctrl+C/V；Ctrl+D 向下填充。</p>
+      <p v-if="clipboardScope">选择线缆编号单列后 Ctrl+X 剪切，Ctrl+V 粘贴；编号和识别来源一起移动，粘贴成功才清空源位置。Ctrl+C 复制及向下填充也携带来源。端子号和端子点不移动。</p>
       <p>选择列从未勾选行拖选可勾选，从已勾选行拖选可取消，支持 Shift 连选。</p>
       <p>人工确认列支持纵向拖选：从未确认行开始批量确认，从已确认行开始批量取消；只读行跳过，整批操作可撤销。</p>
     </details>

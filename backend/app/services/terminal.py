@@ -105,6 +105,15 @@ class TerminalService:
                               "table_note": r["table_note"], "revision": r["current_revision"],
                               "table_revision": r["table_revision"], "geometry_revision": r["geometry_revision"],
                               "review_status": r["review_status"]} for r in values]
+        from app.services.terminal_document import effective_records
+        for association in associations:
+            page = db.execute(select(pages).where(pages.c.job_id == association["job_id"], pages.c.page_no == association["page_no"])).mappings().first()
+            if page and association["side"] in sources:
+                business = effective_records(db, page)
+                if business is not None:
+                    sources[association["side"]] = [{"id": r.get("sourceResultId") or r["id"], "job_id": association["job_id"], "page_no": association["page_no"],
+                        "terminal_number": r["terminalNumber"], "text": r["cable"], "table_note": r["tableNote"],
+                        "revision": 0, "table_revision": digest(r), "geometry_revision": 0, "review_status": "unreviewed"} for r in business]
         reviews = {r["row_id"]: r for r in db.execute(select(terminal_reviews).where(terminal_reviews.c.task_id == task["id"])).mappings()}
         rows = merge_rows(sources, task["links"], reviews)
         return {"id": task["id"], "name": task["name"], "revision": task["revision"], "created_at": task["created_at"],

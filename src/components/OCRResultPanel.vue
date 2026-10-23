@@ -8,6 +8,8 @@ import { filterOcrItems } from '../resultVisibility'
 import { sortOcrItemsByCoordinates } from '../ocrResultOrder'
 import { terminalNumberFillValues } from '../terminalNumberFill'
 import { createGridEditing, type GridChange } from '../ocrGridEditing'
+import { useRoute } from 'vue-router'
+import TerminalBusinessGrid from './TerminalBusinessGrid.vue'
 import { terminalTableRows } from '../terminalPairTable'
 
 const OcrResultGrid = defineAsyncComponent(() => import('./OcrResultGrid.vue'))
@@ -16,6 +18,7 @@ const props = defineProps<{
   page: OcrPage
   pages: OcrPage[]
   selectedId: string
+  selectedTerminalId?: string
   modelLabel: string
   lowConfidenceThreshold: number
   showConfidence: boolean
@@ -30,7 +33,11 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   select: [id: string]
+  selectTerminal: [id: string]
+  selectBusiness: [selection: { pointId: string; sourceId: string }]
+  businessChanged: []
   correct: [item: OcrItem]
+  correctSource: [item: OcrItem]
   comment: [item: OcrItem]
   export: [mode: ExportMode]
   review: [ids: string[], status: OcrReviewStatus]
@@ -47,6 +54,9 @@ const showDeleted = ref(false)
 const selectedIds = ref<string[]>([])
 const coordinateSorted = ref(false)
 const viewMode = ref<'list' | 'table'>('list')
+const route = useRoute()
+const businessGrid = ref<InstanceType<typeof TerminalBusinessGrid>>()
+const changeMode = async (mode: 'list' | 'table') => { if (await flushPendingEdits()) { selectedIds.value = []; viewMode.value = mode } else message.warning('请先完成保存或处理失败') }
 const editing = createGridEditing(() => props.page.items, props.saveTable, props.saveCable, change => {
   if (props.editingDisabled) throw new Error('请先保存或退出端子点编辑，再修改表格')
   if (change.field === 'terminalNumber' && hasTerminalResult.value && !terminalRows.value.some(row => row.item?.id === change.id && row.hasTerminal)) {
@@ -55,12 +65,15 @@ const editing = createGridEditing(() => props.page.items, props.saveTable, props
 })
 function applyHistory(redo = false) { try { editing.history(redo) } catch (error) { message.warning((error as Error).message) } }
 const terminalNumberFilling = ref(false)
-const hasPendingEdits = editing.pending
-const flushPendingEdits = editing.flush
+const hasPendingEdits = () => !!businessGrid.value?.pending() || editing.pending()
+const flushPendingEdits = async () => { if (businessGrid.value && !await businessGrid.value.flush()) return false; return editing.flush() }
 const syncCorrection = editing.syncCorrection
-function applyGridChanges(changes: GridChange[]) { editing.apply(changes) }
-defineExpose({ hasPendingEdits, flushPendingEdits, syncCorrection })
-const filteredItems = computed(() => filterOcrItems(props.page.items, {
+function applyGridChanges(changes: GridChange[]) {
+  try { editing.apply(changes) } catch (error) { message.error(String(error)) }
+}
+
+defineExpose({ hasPendingEdits, flushPendingEdits, syncCorrection, exportItems: () => viewMode.value === 'table' ? businessGrid.value?.exportItems() : undefined })
+const filteredItems = computed(() => filterOcrItems(props.page.items.filter(item => !item.terminalPointId), {
   search: search.value,
   minimumConfidence: minimumConfidencePercent.value / 100,
   lowOnly: lowOnly.value,
@@ -127,7 +140,7 @@ const gridRows = computed(() => hasTerminalResult.value
 
 watch(displayedItems, items => emit('visible-change', items.map(item => item.id)), { immediate: true })
 watch(visibleSelectionIds, ids => { selectedIds.value = selectedIds.value.filter(id => ids.includes(id)) })
-watch(() => `${props.page.no}:${props.page.items[0]?.id || ''}`, () => { selectedIds.value = []; coordinateSorted.value = false; editing.reset() })
+watch(() => props.page, () => { selectedIds.value = []; coordinateSorted.value = false; editing.reset() })
 </script>
 
 <template>
@@ -135,8 +148,8 @@ watch(() => `${props.page.no}:${props.page.items[0]?.id || ''}`, () => { selecte
     <div class="results-head">
 <!--      <div class="results-heading"><h2>识别结果</h2><span>{{ page.items.length }} 个文本区域</span></div>-->
       <div class="result-mode-row" role="group" aria-label="识别结果显示方式">
-      <button :class="{ active: viewMode === 'list' }" :aria-pressed="viewMode === 'list'" @click="viewMode = 'list'">列表显示</button>
-      <button :class="{ active: viewMode === 'table' }" :aria-pressed="viewMode === 'table'" @click="viewMode = 'table'">表格显示</button>
+      <button :class="{ active: viewMode === 'list' }" :aria-pressed="viewMode === 'list'" @click="changeMode('list')">列表显示</button>
+      <button :class="{ active: viewMode === 'table' }" :aria-pressed="viewMode === 'table'" @click="changeMode('table')">表格显示</button>
       <span v-if="viewMode === 'table'">修改后离开单元格自动保存</span>
     </div>
       <button class="copy-btn" :disabled="page.items.length < 2" @click="coordinateSorted = true">{{ coordinateSorted ? '已按坐标排序' : '按坐标排序' }}</button>
@@ -171,7 +184,7 @@ watch(() => `${props.page.no}:${props.page.items[0]?.id || ''}`, () => { selecte
 <!--      <a-checkbox :checked="showDeleted" @update:checked="showDeleted = $event">显示已删除（{{ deletedCount }}）</a-checkbox>-->
 <!--      <span>可见 {{ filteredItems.length }} / 有效 {{ activeItems.length }} / 总计 {{ page.items.length }}</span>-->
 <!--    </div>-->
-    <div class="batch-review-bar">
+    <div v-if="viewMode === 'list' || !hasTerminalResult" class="batch-review-bar">
       <a-checkbox :checked="allVisibleSelected" @update:checked="toggleAllVisible($event)">全选当前</a-checkbox>
       <span>已选 {{ selectedIds.length }} 项</span>
       <button v-if="viewMode === 'list'" :disabled="!selectedReviewIds.length" @click="reviewSelected('false_positive')"><WarningOutlined /> 标记误检</button>
@@ -186,7 +199,7 @@ watch(() => `${props.page.no}:${props.page.items[0]?.id || ''}`, () => { selecte
         <div class="result-index">{{ String(displayIndex + 1).padStart(2, '0') }}</div>
         <div class="result-main">
           <p>
-            {{ item.corrected || item.text }}
+            {{ item.corrected ?? item.text }}
             <span v-if="item.needsRawTextReview && !item.corrected" class="raw-text-review-tag">待核对原始标记</span>
           </p>
           <div class="result-meta">
@@ -207,10 +220,12 @@ watch(() => `${props.page.no}:${props.page.items[0]?.id || ''}`, () => { selecte
       </article>
       <a-empty v-if="!displayedItems.length" description="没有匹配的识别结果" />
     </div>
-    <OcrResultGrid v-else :rows="gridRows" :selected-id="selectedId"
+    <TerminalBusinessGrid v-if="hasTerminalResult" v-show="viewMode === 'table'" :key="`${route.params.taskId}:${page.no}`" ref="businessGrid" :selected-terminal-id="selectedTerminalId" :selected-source-id="selectedId" :page="page" :editing-disabled="editingDisabled" @select-business="emit('selectBusiness', $event)" @select-terminal="emit('selectTerminal', $event)" @changed="emit('businessChanged')" @select-source="emit('select', $event)" />
+    <OcrResultGrid v-if="viewMode === 'table' && !hasTerminalResult" :rows="gridRows" :selected-id="selectedId"
       :terminal-count="hasTerminalResult ? (page.terminalPoints?.length || 0) : undefined" :model-terminal-count="page.terminalModelCount" :editing-disabled="editingDisabled"
       :selected-ids="selectedIds" :values="editing.values" :statuses="editing.state.status" :revision="editing.state.revision"
       :can-undo="!!editing.state.undo.length" :can-redo="!!editing.state.redo.length"
+      @correct-source="async item => { if (await flushPendingEdits()) emit('correctSource', item); else message.warning('请先完成表格保存并处理失败或冲突') }"
       @change="applyGridChanges" @select="emit('select', $event)" @selection="selectedIds = $event"
       @undo="applyHistory()" @redo="applyHistory(true)" @retry="editing.retry($event)" />
     <footer class="results-footer">

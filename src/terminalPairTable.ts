@@ -88,7 +88,9 @@ function isBetter(candidate: [number, number, string], current: [number, number,
 
 export function terminalTableRows(points: TerminalPoint[], items: OcrItem[]): TerminalTableRow[] {
   const orderedPoints = orderedTerminalPoints(points)
-  const lines = exportableOcrItems(items)
+  const available = exportableOcrItems(items)
+  const bound = new Map(available.filter(item => item.terminalPointId).map(item => [item.terminalPointId!, item]))
+  const lines = available.filter(item => !item.terminalPointId || !orderedPoints.some(p => p.id === item.terminalPointId))
   const winners = new Map<string, { item: OcrItem; rank: [number, number, string] }>()
   const unmatched: OcrItem[] = []
 
@@ -114,9 +116,12 @@ export function terminalTableRows(points: TerminalPoint[], items: OcrItem[]): Te
     }
   }
 
+  for (const [pointId, winner] of winners) {
+    if (bound.has(pointId)) unmatched.push(winner.item)
+  }
   const rows = [
     ...orderedPoints.map((point, index) => {
-      const item = winners.get(point.id)?.item
+      const item = bound.get(point.id) || winners.get(point.id)?.item
       return { y: point.y, x: point.x, terminal: true, selectionId: item?.id || `terminal:${point.id}`,
         terminalNumber: item?.terminalNumber?.trim() || String(index + 1), item }
     }),

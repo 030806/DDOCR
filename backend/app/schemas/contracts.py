@@ -155,3 +155,16 @@ class PasswordResetCreate(BaseModel):
     phone: str = Field(min_length=7, max_length=30)
     code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
     new_password: str = Field(min_length=8, max_length=128)
+
+
+class TerminalSourceCorrection(BaseModel):
+    result_id: str
+    base_revision: int = Field(ge=0)
+    text: str = Field(max_length=500)
+
+
+class TerminalDocumentSave(BaseModel):
+    base_revision: int = Field(ge=0)
+    records: list[dict[str, Any]] = Field(max_length=5000)
+    source: TerminalSourceCorrection | None = None
+    sync_record_id: str | None = None

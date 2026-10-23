@@ -110,3 +110,8 @@ OCR 纠正和评论使用 `corrections`、`comments` 关系表作为唯一数据
 健康检查：`GET http://127.0.0.1:8000/health`；Swagger：`http://127.0.0.1:8000/docs`。
 
 忘记密码本地联调可在 `.env` 设置 `DDOCR_EXPOSE_PASSWORD_RESET_CODE=true`，使申请接口返回开发验证码。生产环境必须保持为 `false` 并接入短信发送服务。数据库升级需执行 `alembic upgrade head` 以创建 `password_reset_tokens` 表。
+
+
+### 端子业务记录分离
+
+端子表格通过新增 `/ocr/jobs/{job_id}/pages/{page_no}/terminal-document` GET/PUT 读写独立业务数据，原 OCR 接口继续保留。PostgreSQL 部署前执行 `alembic upgrade head`（新增 `b2_terminal_documents`），SQLite 自动创建新表。记录按页整体做版本校验及事务保存；来源纠正与明确选择的业务同步共同提交。已有数据首次读取时保守初始化，原始 OCR 和纠正历史保留。详见 `../docs/workspace-layout.md`。

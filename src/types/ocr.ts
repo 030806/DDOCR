@@ -17,6 +17,7 @@ export type OcrPolygon = [
 export type OcrItem = {
   id: string
   text: string
+  terminalPointId?: string
   rawText?: string
   score: number
   bbox: [number, number, number, number]

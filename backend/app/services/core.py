@@ -801,6 +801,25 @@ class MockOcrService:
         except ValueError as exc:
             raise HTTPException(409, {"code": "GEOMETRY_REVISION_CONFLICT", "result_id": str(exc)}) from exc
 
+    def ensure_terminal_record(self, job_id: str, page_no: int, point_id: str, owner_id: str) -> dict[str, Any]:
+        from uuid import uuid5, NAMESPACE_URL
+        job = self.job(job_id, owner_id)
+        page = next((p for pid in job["page_ids"] if (p := self.page(pid)) and p["page_no"] == page_no), None)
+        if page is None:
+            raise HTTPException(404, "Page not found")
+        point = next((p for p in (page.get("terminal_points") or []) if p["id"] == point_id), None)
+        if point is None:
+            raise HTTPException(404, "Terminal point not found")
+        result_id = str(uuid5(NAMESPACE_URL, f"terminal-record:{page['id']}:{point_id}"))
+        width, height = float(page["image"]["width_px"]), float(page["image"]["height_px"])
+        x, y = min(max(point["x"], 2), width - 2), min(max(point["y"], 2), height - 2)
+        bbox = [x - 2, y - 2, x + 2, y + 2]
+        self.result_repository.apply_edits(page=page, updates=[], deletes=[], user_id=owner_id, creates=[{
+            "id": result_id, "client_id": point_id, "terminal_point_id": point_id,
+            "revision_id": uid(), "bbox": bbox, "polygon": [[bbox[0], bbox[1]], [bbox[2], bbox[1]], [bbox[2], bbox[3]], [bbox[0], bbox[3]]], "text": "",
+        }])
+        return self.public_result(self.result(result_id, owner_id))
+
     def save_terminal_points(
         self, job_id: str, page_no: int, body: TerminalPointsUpdate, owner_id: str,
     ) -> dict[str, Any]:
@@ -964,6 +983,14 @@ class MockOcrService:
                     item for item in line_results
                     if item.get("review_status") not in {"deleted", "false_positive"}
                 ]
+                from app.services.terminal_document import effective_records
+                from sqlalchemy.orm import Session
+                with Session(self.store.engine) as db:
+                    business = effective_records(db, page)
+                if business is not None:
+                    for record in business:
+                        pair_sheet.append([page["page_no"], record["terminalNumber"], record["cable"]])
+                    continue
                 for terminal_number, item in terminal_pair_rows(page["terminal_points"], line_results):
                     pair_sheet.append([
                         page["page_no"],

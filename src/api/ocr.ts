@@ -67,7 +67,7 @@ type ApiResult = {
   manual_confirmed?: boolean
   table_note?: string
   table_revision?: number
-  attributes?: { source?: string; is_unresolved?: boolean; raw_text?: string }
+  attributes?: { terminal_point_id?: string; source?: string; is_unresolved?: boolean; raw_text?: string }
 }
 
 type ApiCorrection = {
@@ -182,6 +182,7 @@ export function mapApiResult(result: ApiResult): OcrItem {
     id: result.id,
     text: result.text,
     rawText: result.attributes?.raw_text,
+    terminalPointId: result.attributes?.terminal_point_id,
     score: result.confidence,
     bbox: result.bbox,
     polygon: result.polygon || undefined,
@@ -524,4 +525,9 @@ export async function getModels(): Promise<ModelOption[]> {
     note: model.note,
     speed: `${model.estimated_ms_per_page} ms/页`,
   }))
+}
+
+export async function ensureTerminalRecord(taskId: string, pageNo: number, pointId: string): Promise<OcrItem> {
+  const response = await apiClient.put<ApiEnvelope<ApiResult>>(`/ocr/jobs/${taskId}/pages/${pageNo}/terminal-records/${encodeURIComponent(pointId)}`)
+  return mapApiResult(response.data.data)
 }

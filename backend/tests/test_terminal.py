@@ -233,3 +233,39 @@ def test_soft_delete_keeps_list_pagination_dense(tmp_path):
         assert [first['items'][0]['id'], second['items'][0]['id']] == [created[2]['id'], created[0]['id']]
         assert first['next_offset'] == 1
         assert second['next_offset'] is None
+
+
+def test_merge_reads_independent_business_values(tmp_path):
+    api = client(tmp_path)
+    task, headers = setup_pair(api)
+    job = task["sides"]["left"]["job_id"]
+    prefix = f"/api/v1/ocr/jobs/{job}/pages/1"
+    api.put(prefix + "/terminal-points", headers=headers,
+            json={"base_revision": 0, "points": [{"id": "p", "x": 100, "y": 100}]})
+    document = api.get(prefix + "/terminal-document", headers=headers).json()["data"]
+    document["records"][0].update(cable="FINAL-BUSINESS", manual=True)
+    response = api.put(prefix + "/terminal-document", headers=headers,
+                       json={"base_revision": document["revision"], "records": document["records"]})
+    assert response.status_code == 200
+    updated = api.get(f"/api/v1/terminal-tasks/{task['id']}", headers=headers).json()["data"]
+    assert any(row["left"] and row["left"]["text"] == "FINAL-BUSINESS" for row in updated["rows"])
+
+
+def test_terminal_business_migration_is_additive_and_reversible(tmp_path):
+    import importlib.util
+    from pathlib import Path
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import create_engine, inspect
+    migration_path = Path(__file__).parents[1] / 'migrations/versions/b2_terminal_documents.py'
+    spec = importlib.util.spec_from_file_location('business_migration', migration_path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    engine = create_engine(f"sqlite:///{tmp_path / 'business-migration.db'}")
+    with engine.begin() as connection:
+        with Operations.context(MigrationContext.configure(connection)):
+            migration.upgrade()
+            assert 'terminal_documents' in inspect(connection).get_table_names()
+            assert {c['name'] for c in inspect(connection).get_columns('terminal_documents')} == {'page_id', 'records', 'revision'}
+            migration.downgrade()
+            assert 'terminal_documents' not in inspect(connection).get_table_names()

@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
     "test": "vitest run",
-    "test:grid": "playwright test --config playwright.grid.config.ts"
+    "test:grid": "playwright test --config playwright.grid.config.ts",
+    "test:business": "node tests/business/smoke.cjs"
   },
   "dependencies": {
     "@ant-design/icons-vue": "^7.0.1",
