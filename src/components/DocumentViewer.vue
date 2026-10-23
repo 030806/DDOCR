@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { AimOutlined, CheckCircleFilled, CheckOutlined, CloseOutlined, EditOutlined, FileTextOutlined, LeftOutlined, RedoOutlined, RightOutlined, SaveOutlined, UndoOutlined, ZoomInOutlined, ZoomOutOutlined } from '@ant-design/icons-vue'
+import { ref, watch } from 'vue'
 import type { OcrPage, OcrPolygon } from '../types/ocr'
 import BBoxLayer from './BBoxLayer.vue'
 
@@ -21,6 +22,12 @@ defineProps<{
   terminalSaving?: boolean
   selectedTerminalId?: string
 }>()
+
+const railCollapsed = ref(false)
+try { railCollapsed.value = localStorage.getItem('ddocr.pageRailCollapsed') === 'true' } catch { /* Storage may be unavailable. */ }
+watch(railCollapsed, value => {
+  try { localStorage.setItem('ddocr.pageRailCollapsed', String(value)) } catch { /* Keep the session preference. */ }
+})
 
 const emit = defineEmits<{
   pageChange: [page: number]
@@ -46,7 +53,10 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <aside class="page-rail">
+  <aside class="page-rail" :class="{ collapsed: railCollapsed }">
+    <button class="rail-toggle" :aria-expanded="!railCollapsed" :aria-label="railCollapsed ? '展开页面栏' : '收起页面栏'" :title="railCollapsed ? '展开页面栏' : '收起页面栏'" @click="railCollapsed = !railCollapsed">
+      <RightOutlined v-if="railCollapsed" /><LeftOutlined v-else /><span v-if="!railCollapsed">收起</span>
+    </button>
     <div class="rail-title"><FileTextOutlined /> 页面 <span>{{ pages.length }}</span></div>
     <button v-for="p in pages" :key="p.no" class="page-thumb" :class="{ active: currentPage === p.no }" @click="emit('pageChange', p.no)">
       <div class="mini-paper"><div class="mini-brand"></div><i></i><i></i><i></i><i></i><i></i></div>
@@ -66,20 +76,22 @@ const emit = defineEmits<{
         <span>{{ currentPage }} / {{ pages.length }}</span>
         <button :disabled="currentPage === pages.length" @click="emit('pageChange', currentPage + 1)"><RightOutlined /></button>
       </div>
-      <div class="document-name">{{ page.label }} <span>·</span> 原始尺寸 {{ page.sourceWidth || 2480 }} × {{ page.sourceHeight || 3508 }} px
-        <span v-if="page.terminalPoints"> · 端子对 {{ page.terminalPoints.length }} 个<span v-if="page.terminalModelCount !== null && page.terminalModelCount !== undefined && page.terminalModelCount !== page.terminalPoints.length">（模型原始 {{ page.terminalModelCount }} 个）</span></span>
-        <span v-else-if="page.terminalError"> · 端子检测不可用</span>
-      </div>
       <div class="zoom-control">
         <button v-if="jobState === 'done'" :disabled="editMode || terminalEditMode" @click="emit('createRegionJob')"><AimOutlined /> 区域识别</button>
         <button :disabled="terminalEditMode" :class="{ active: editMode }" @click="emit('editToggle')"><EditOutlined /> {{ editMode ? '退出编辑' : '编辑框' }}</button>
         <button v-if="page.terminalPoints" :disabled="editMode || terminalSaving" :class="{ active: terminalEditMode }" @click="emit('terminalToggle')"><EditOutlined /> {{ terminalEditMode ? '退出端子编辑' : '编辑端子点' }}</button>
+        <div class="zoom-buttons">
         <button @click="emit('zoomChange', Math.max(.55, zoom - .1))"><ZoomOutOutlined /></button>
         <span>{{ Math.round(zoom * 100) }}%</span>
         <button :disabled="zoom >= 3" @click="emit('zoomChange', Math.min(3, Number((zoom + .1).toFixed(2))))"><ZoomInOutlined /></button>
         <button @click="emit('zoomChange', .82)">适应窗口</button>
+        </div>
       </div>
     </div>
+      <div class="document-name" :title="page.label">{{ page.label }} <span>·</span> 原始尺寸 {{ page.sourceWidth || 2480 }} × {{ page.sourceHeight || 3508 }} px
+        <span v-if="page.terminalPoints"> · 端子对 {{ page.terminalPoints.length }} 个<span v-if="page.terminalModelCount !== null && page.terminalModelCount !== undefined && page.terminalModelCount !== page.terminalPoints.length">（模型原始 {{ page.terminalModelCount }} 个）</span></span>
+        <span v-else-if="page.terminalError"> · 端子检测不可用</span>
+      </div>
     <div v-if="editMode" class="edit-action-bar">
       <span class="edit-action-title"><EditOutlined /> 检测框编辑</span>
       <button type="button" :disabled="!canUndo" title="撤销" @click="emit('undo')"><UndoOutlined /> 撤销</button>

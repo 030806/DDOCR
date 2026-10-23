@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { UndoOutlined, RedoOutlined, VerticalAlignBottomOutlined, OrderedListOutlined, FullscreenOutlined, FullscreenExitOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import { TabulatorFull as Tabulator, type CellComponent, type ColumnDefinition } from 'tabulator-tables'
 import 'tabulator-tables/dist/css/tabulator.min.css'
 import type { OcrItem } from '../types/ocr'
@@ -30,6 +31,8 @@ const emit = defineEmits<{
 }>()
 const host = ref<HTMLDivElement>()
 const expanded = ref(false)
+const savingCount = computed(() => Object.values(props.statuses).filter(s => s === '保存中').length)
+const failureCount = computed(() => Object.values(props.statuses).filter(s => s.startsWith('保存失败') || s.startsWith('版本冲突')).length)
 const feedback = ref('')
 const numberDialog = ref(false)
 type NumberTarget = { rowKey: string; id?: string; index: number; before: string; hasTerminal: boolean; requiresTerminalReview: boolean }
@@ -308,15 +311,26 @@ onBeforeUnmount(() => { built = false; host.value?.removeEventListener('paste', 
 <template>
   <section class="ocr-grid-shell" :class="{ expanded }" aria-label="OCR专业数据表格">
     <div class="ocr-grid-toolbar">
-      <button :disabled="!canUndo" @click="emit('undo')">撤销</button><button :disabled="!canRedo" @click="emit('redo')">重做</button>
-      <button @click="fillDown">向下填充</button>
-      <button :disabled="editingDisabled || (!numberRangeIds.length && !selectedIds.length)" @click="openNumberDialog">顺序编号</button>
-      <button @click="expanded = !expanded">{{ expanded ? '退出放大' : '放大表格' }}</button>
-      <button v-if="Object.values(statuses).some(s => s.startsWith('保存失败'))" @click="Object.entries(statuses).filter(([, s]) => s.startsWith('保存失败')).forEach(([id]) => emit('retry', id))">重试失败项</button>
-      <span>{{ Object.values(statuses).filter(s => s === '保存中').length }} 行保存中 / {{ Object.values(statuses).filter(s => s.startsWith('保存失败') || s.startsWith('版本冲突')).length }} 行失败或冲突</span>
+      <div class="ocr-grid-actions">
+        <button class="icon-action" :disabled="!canUndo" title="撤销" aria-label="撤销" @click="emit('undo')"><UndoOutlined /></button>
+        <button class="icon-action" :disabled="!canRedo" title="重做" aria-label="重做" @click="emit('redo')"><RedoOutlined /></button>
+        <span class="toolbar-divider" aria-hidden="true"></span>
+        <button @click="fillDown"><VerticalAlignBottomOutlined /> 向下填充</button>
+        <button :disabled="editingDisabled || (!numberRangeIds.length && !selectedIds.length)" @click="openNumberDialog"><OrderedListOutlined /> 顺序编号</button>
+      </div>
+      <div v-if="savingCount || failureCount" class="ocr-grid-save-status" role="status" aria-live="polite">
+        <span v-if="savingCount" class="saving">正在保存 {{ savingCount }} 行</span>
+        <span v-if="failureCount" class="failure">{{ failureCount }} 行失败或冲突</span>
+        <button v-if="Object.values(statuses).some(s => s.startsWith('保存失败'))" @click="Object.entries(statuses).filter(([, s]) => s.startsWith('保存失败')).forEach(([id]) => emit('retry', id))"><ReloadOutlined /> 重试失败项</button>
+      </div>
+      <button class="ocr-grid-expand" :aria-pressed="expanded" @click="expanded = !expanded"><FullscreenExitOutlined v-if="expanded" /><FullscreenOutlined v-else /> {{ expanded ? '退出放大' : '放大表格' }}</button>
     </div>
-    <p class="ocr-grid-hint">双击编辑；Tab 左右、Enter 上下；拖选区域后 Ctrl+C/V；Ctrl+D 向下填充；选择列从未勾选行拖选可勾选，从已勾选行拖选可取消，支持 Shift 连选。</p>
-    <p class="ocr-grid-hint">人工确认列支持纵向拖选：从未确认行开始批量确认，从已确认行开始批量取消；只读行跳过，整批操作可撤销。</p>
+    <details class="ocr-grid-help">
+      <summary>操作帮助</summary>
+      <p>双击编辑；Tab 左右、Enter 上下；拖选区域后 Ctrl+C/V；Ctrl+D 向下填充。</p>
+      <p>选择列从未勾选行拖选可勾选，从已勾选行拖选可取消，支持 Shift 连选。</p>
+      <p>人工确认列支持纵向拖选：从未确认行开始批量确认，从已确认行开始批量取消；只读行跳过，整批操作可撤销。</p>
+    </details>
     <p v-if="editingDisabled" class="ocr-grid-hint">请先保存或退出端子点编辑，再修改表格或编号；当前显示的端子点可能尚未保存。</p>
     <div ref="host" class="ocr-grid-host" tabindex="0"></div>
     <p class="ocr-grid-feedback" role="status">{{ feedback }}</p>
@@ -371,4 +385,26 @@ button:disabled { opacity:.45; cursor:default; }
 .ocr-grid-host :deep(.tabulator-cell input[type=checkbox]) { accent-color:#1677ff; }
 .ocr-grid-host :deep(.ocr-raw-review) { color:#ad6800; }
 .ocr-grid-host :deep(.ocr-raw-review.hidden) { display:none; }
+/* Compact toolbar and a theme scoped to this grid only. */
+.ocr-grid-toolbar { gap: 6px 12px; padding: 6px 8px; border-bottom: 1px solid #e2e8e5; font-size: 12px; }
+.ocr-grid-actions,.ocr-grid-save-status { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.ocr-grid-toolbar button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 28px; padding: 0 8px; border: 1px solid transparent; background: transparent; color: #53665e; font: inherit; white-space: nowrap; }
+.ocr-grid-toolbar button:hover:not(:disabled) { background: #eaf3ee; color: #126f57; }
+.ocr-grid-toolbar button:focus-visible { outline: 2px solid #168b6c; outline-offset: 1px; }
+.ocr-grid-toolbar .icon-action { width: 28px; padding: 0; }
+.toolbar-divider { height: 16px; border-left: 1px solid #dce5df; margin: 0 4px; }
+.ocr-grid-toolbar .ocr-grid-expand { margin-left: auto; }
+.ocr-grid-save-status { font-size: 12px; gap: 8px; }
+.ocr-grid-save-status .saving { color: #1677ff; }
+.ocr-grid-save-status .failure { color: #ad4e00; }
+.ocr-grid-help { margin: 4px 8px 6px; font-size: 12px; color: #65736e; }
+.ocr-grid-help summary { cursor: pointer; width: fit-content; }
+.ocr-grid-help p { margin: 5px 0; line-height: 1.6; }
+.ocr-grid-host :deep(.tabulator-header),.ocr-grid-host :deep(.tabulator-header .tabulator-col) { background: #f0f5f2; color: #40564b; border-color: #dce5df; }
+.ocr-grid-host :deep(.tabulator-tableholder .tabulator-table) { background: #fff; color: #33473c; }
+.ocr-grid-host :deep(.tabulator-row) { background: #fff; color: #33473c; }
+.ocr-grid-host :deep(.tabulator-row.tabulator-row-even) { background: #f8fbf9; }
+.ocr-grid-host :deep(.tabulator-row .tabulator-cell) { border-color: #e5ece7; }
+.ocr-grid-host :deep(.tabulator-row.tabulator-selectable:hover) { background: #edf5f0; }
+.ocr-grid-host :deep(.tabulator-row.tabulator-selected) { background: #e6f4ff; }
 </style>

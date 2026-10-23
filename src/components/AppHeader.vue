@@ -42,6 +42,7 @@ watch(() => route.params.taskId, async (taskId) => {
       <template v-else>产线文档检测台 <b>/</b> {{ workspaceFile }}</template>
     </div>
     <nav class="top-actions">
+      <button :class="{ active: route.path.startsWith('/workspace') }" @click="router.push('/workspace')">工作台</button>
       <button :class="{ active: route.path.startsWith('/terminal-tasks') }" @click="router.push('/terminal-tasks')">端子排任务</button>
       <button :class="{ active: isTasksPage }" @click="router.push('/tasks')"><HistoryOutlined /> 任务记录</button>
       <button @click="emit('openSettings')"><SettingOutlined /> 设置</button>
