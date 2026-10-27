@@ -6,7 +6,7 @@ import { isAxiosError } from 'axios'
 import { Pane, Splitpanes } from 'splitpanes'
 import 'splitpanes/dist/splitpanes.css'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter, type NavigationGuardNext } from 'vue-router'
-import type { IlluminationMode, ModelOption, OcrItem, OcrPage, OcrPolygon, OcrReviewStatus, TerminalPoint } from '../types/ocr'
+import type { ModelOption, OcrItem, OcrPage, OcrPolygon, OcrReviewStatus, TerminalPoint } from '../types/ocr'
 import { createComment, createCorrection, createRegionOcrTask, deleteComment, getModels, getOcrPages, releasePageImages, rerunOcrTask, saveResultEdits, saveTerminalPoints, updateComment, updateResultReviewStatus, updateResultTable, uploadAndCreateOcrTaskFromSelection, type RegionDraft } from '../api/ocr'
 import { createSplitLayout } from '../splitLayout'
 import { completeDatasetReview, getDatasetStatuses, type DatasetStatus } from '../api/dataset'
@@ -44,7 +44,6 @@ const initialContent = createEmptyWorkspaceContent()
 const currentPage = ref(initialContent.currentPage)
 const selectedId = ref(initialContent.selectedId)
 const selectedModel = ref('')
-const illumination = ref<IlluminationMode>('none')
 const availableModels = ref<ModelOption[]>([])
 const zoom = ref(settings.value.defaultZoom)
 const jobState = ref<JobState>('ready')
@@ -223,7 +222,6 @@ function ensureTaskModel(task: NonNullable<typeof polledTask.value>): void {
     availableModels.value.push({ value: task.modelId, version: task.modelVersion || '', label: task.modelName, note: '', speed: '' })
   }
   selectedModel.value = task.modelId
-  illumination.value = task.illumination || 'none'
 }
 
 async function loadCompletedTask(task: NonNullable<typeof polledTask.value>, sequence: number): Promise<void> {
@@ -299,7 +297,6 @@ watch(() => route.params.taskId, (taskId) => {
   if (typeof taskId !== 'string' || !taskId) {
     selectedFile.value = undefined
     selectedRegions.value = []
-    illumination.value = 'none'
     jobState.value = 'ready'
     progress.value = 0
     taskLoading.value = false
@@ -674,7 +671,7 @@ async function runOcr() {
     jobState.value = 'running'
     progress.value = 5
     try {
-      const taskId = await rerunOcrTask(sourceTaskId, currentModel.value, illumination.value)
+      const taskId = await rerunOcrTask(sourceTaskId, currentModel.value)
       message.success(`已使用原文件重新识别 · ${currentModel.value.label}`)
       await navigateCreatedTask(taskId)
     } catch (error) {
@@ -698,7 +695,7 @@ async function runOcr() {
   jobState.value = 'running'
   progress.value = 5
   try {
-    const taskId = await uploadAndCreateOcrTaskFromSelection(file, model, regions, (_stage, value) => { progress.value = value }, illumination.value)
+    const taskId = await uploadAndCreateOcrTaskFromSelection(file, model, regions, (_stage, value) => { progress.value = value })
     progress.value = 0
     jobState.value = 'running'
     message.success(`${regions.length ? '区域识别' : '整图识别'}任务已提交 · ${model.label}`)
@@ -723,7 +720,7 @@ async function submitRegionJob(name: string, regions: RegionDraft[]) {
     const sourceJobId = typeof route.params.taskId === 'string' ? route.params.taskId : undefined
     if (!sourceJobId) return
     const taskId = await createRegionOcrTask({
-      name, model: currentModel.value, regions, sourceJobId, illumination: illumination.value,
+      name, model: currentModel.value, regions, sourceJobId,
     })
     regionJobOpen.value = false
     progress.value = 0
@@ -890,7 +887,7 @@ async function handleExport(mode: ExportMode) {
 
 <template>
   <div class="workspace-view" :inert="datasetReviewSaving || bboxSaving">
-    <UploadPanel :models="availableModels" :selected-model="selectedModel" :current-model="currentModel" :job-state="jobState" :progress="progress" :file-name="selectedFileName" :file-meta="selectedFileMeta" :has-file="Boolean(selectedFile)" :region-count="selectedRegions.length" :illumination="illumination" @update:selected-model="selectedModel = $event" @update:illumination="illumination = $event" @upload="handleUpload" @preview="previewUpload" @run="runOcr" />
+    <UploadPanel :models="availableModels" :selected-model="selectedModel" :current-model="currentModel" :job-state="jobState" :progress="progress" :file-name="selectedFileName" :file-meta="selectedFileMeta" :has-file="Boolean(selectedFile)" :region-count="selectedRegions.length" @update:selected-model="selectedModel = $event" @upload="handleUpload" @preview="previewUpload" @run="runOcr" />
     <div v-if="taskLoading" class="workspace-empty"><a-spin size="large" /><p>正在加载任务数据…</p></div>
     <OcrProgressCard v-else-if="polledTask && !['succeeded', 'partial_success'].includes(polledTask.jobStatus || 'queued')" :task="polledTask" :elapsed-ms="elapsedMs" :request-failed="Boolean(pollingError)" @retry="retryTask" />
     <Splitpanes v-else-if="page" ref="workspace" class="workspace">

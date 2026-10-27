@@ -24,7 +24,7 @@ from app.ocr.errors import OcrImageDecodeError
 from app.ocr.geometry import full_image_roi, polygon_to_bbox
 from app.vendor.terminal_ocr_demo.rules import (
     contains_only_allowed_characters,
-    mask_invalid_characters,
+    remove_invalid_characters,
     normalize_terminal_text,
 )
 
@@ -207,14 +207,14 @@ class OcrAdapter:
         confidence, confidence_attributes = _normalize_confidence(
             detection.ocr_score
         )
-        # Keep uncertain text visible with a marker for each illegal character.
-        # The original OCR text remains available separately for correction.
+        # Keep surviving characters visible. If none survive, show one review
+        # marker; the original OCR text remains available for correction.
         if detection.output_text not in (None, ""):
             text = detection.output_text
         elif contains_only_allowed_characters(detection.raw_text):
             text = normalize_terminal_text(detection.raw_text)
         else:
-            text = mask_invalid_characters(detection.raw_text)
+            text = remove_invalid_characters(detection.raw_text)
         assessment = _json_safe(detection.assessment)
         attributes: dict[str, Any] = {
             "roi_id": str(detection.roi_id),

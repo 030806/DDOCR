@@ -59,4 +59,4 @@ YOLOX 服务启动时加载权重；权重缺失、模型结构不匹配或 GPU 
 
 ## 光照预处理对照
 
-PPOCR 的光照预处理通过 `DDOCR_OCR_ILLUMINATION=none|he|clahe` 配置，默认 `none`。`he` 为亮度通道全局直方图均衡化，`clahe` 为局部均衡化；YOLOX 仍使用原图。部署后可运行 `backend/scripts/compare_illumination.py` 对同一组带真值图片比较三种模式，再决定是否调整默认值。详细输入和判读要求见 [15_DDOCR_1011_端子与线号识别优化方案.md](15_DDOCR_1011_端子与线号识别优化方案.md)。
+PPOCR 默认执行全局 HE：在 ROI 裁剪后、缩放和旋转前，对亮度通道做全局直方图均衡化；开始识别、选区识别与重新识别均使用该默认值。界面不再提供原图／HE／CLAHE 选择。现有 API 可显式传入 `illumination=none|he|clahe` 供对照测试；`DDOCR_OCR_ILLUMINATION` 是未传每任务模式时的引擎默认值，普通网页任务会显式发送 `he`。部署示例默认 `he`；YOLOX 始终使用原图。可用 `backend/scripts/compare_illumination.py` 离线比较三种模式。原先的对照试验方案见 [15_DDOCR_1011_端子与线号识别优化方案.md](15_DDOCR_1011_端子与线号识别优化方案.md)。

@@ -93,7 +93,8 @@ def test_output_text_none_falls_back_to_raw_text() -> None:
 
 @pytest.mark.parametrize("raw_text, expected", [
     ("X-16", "X-16"), ("X/16", "X/16"),
-    ("K2IC", "K2#C"), ("电源-24V", "##-24#"), ("X（16", "X#16"),
+    ("K2IC", "K2IC"), ("电源-24V", "-24V"), ("X（16", "X16"),
+    ("（中文）", "#"),
 ])
 def test_empty_output_keeps_allowed_text_only_and_requires_review(raw_text: str, expected: str) -> None:
     adapted = OcrAdapter.adapt_detection(

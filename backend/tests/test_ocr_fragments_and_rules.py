@@ -58,15 +58,17 @@ def test_text_band_follows_sloping_four_point_box(tmp_path):
     assert [item.raw_text for item in result.detections] == ["X8"]
 
 
-def test_hyphen_and_slash_are_allowed_characters_but_not_confirmed_codes(tmp_path):
+def test_full_alphabet_hyphen_and_slash_are_allowed_but_not_confirmed_codes(tmp_path):
     code_rules = rules(tmp_path)
-    for value in ("X-16", "X/16"):
+    for value in ("X-16", "X/16", "K2IC", "A0Z9"):
         assert contains_only_allowed_characters(value)
         assert normalize_terminal_text(value) == value
-        assert code_rules.assess(value).review_status == "unresolved"
+    assert code_rules.assess("X-16").review_status == "unresolved"
+    assert code_rules.assess("X/16").review_status == "unresolved"
+    assert contains_only_allowed_characters("a0z9-/")
     assert not contains_only_allowed_characters("X（16")
     masked = code_rules.assess("X（16")
-    assert masked.output_text == "X#16"
+    assert masked.output_text == "X16"
     assert masked.rule_status == "masked_base_candidate"
     assert masked.review_status == "unresolved"
     assert masked.recommended_code is None
@@ -75,18 +77,24 @@ def test_hyphen_and_slash_are_allowed_characters_but_not_confirmed_codes(tmp_pat
 def test_masked_library_matches_are_suggestions_not_confirmed(tmp_path):
     code_rules = rules(tmp_path)
     masked = code_rules.assess("X（6")
-    assert masked.output_text == "X#6"
+    assert masked.output_text == "X6"
     assert masked.candidate_codes == ("X16",)
     assert masked.recommended_code is None
     assert masked.review_status == "unresolved"
 
 
-def test_invalid_latin_character_needs_model_evidence_or_remains_masked(tmp_path):
+def test_invalid_character_is_removed_without_confirming_wildcard_suggestion(tmp_path):
     library = tmp_path / "codes.csv"
     library.write_text("code,count,rule_status\nK21C,1,base\n", encoding="utf-8")
-    assessment = TerminalCodeRules.from_csv(library).assess("K2IC")
-    assert assessment.output_text == "K2#C"
+    assessment = TerminalCodeRules.from_csv(library).assess("K2（C")
+    assert assessment.output_text == "K2C"
     assert assessment.candidate_codes == ("K21C",)
     assert assessment.recommended_code is None
+    assert assessment.review_status == "unresolved"
+
+
+def test_all_invalid_characters_leave_one_review_marker(tmp_path):
+    assessment = rules(tmp_path).assess("（中文）")
+    assert assessment.output_text == "#"
     assert assessment.review_status == "unresolved"
 
