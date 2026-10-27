@@ -123,7 +123,7 @@ async function saveSource(text: string) {
   const source = sourceTarget.value
   if (!source || busy.value) return
   const before = clone(doc.value.records), beforeText = source.corrected ?? source.text
-  if (await commit(clone(before), { result_id: source.id, base_revision: source.revision || 0, text }, syncSource.value && (sourceRecord.value?.manual || sourceRecord.value?.manualConfirmed) ? sourceRecordId.value : undefined)) {
+  if (await commit(clone(before), { result_id: source.id, base_revision: source.revision || 0, text }, syncSource.value && sourceRecord.value?.manualConfirmed ? sourceRecordId.value : undefined)) {
     undo.value.push({ before, after: clone(doc.value.records), sourceId: source.id, beforeText, afterText: text, expectedSourceRevision: source.revision })
     redo.value = []; sourceOpen.value = false
   }
@@ -177,7 +177,7 @@ defineExpose({ pending: () => busy.value || !loaded.value || failed.value, flush
     <CorrectionModal v-model:open="sourceOpen" :item="sourceTarget" :saving="busy" source-mode :independent="true" :image-url="page.imageUrl" :source-width="page.sourceWidth" :source-height="page.sourceHeight" @save="saveSource">
       <template #default="{ text }">
       <p>当前端子最终编号：{{ sourceRecord?.cable || '（空白）' }}</p>
-      <p v-if="!sourceRecord?.manual && !sourceRecord?.manualConfirmed">此行尚未人工修改，来源纠正后自动跟随。</p>
+      <p v-if="!sourceRecord?.manualConfirmed">此行尚未人工确认，来源纠正后自动跟随；手动输入及内部复制、剪切不停止同步。</p>
       <label v-else><input v-model="syncSource" type="checkbox" />同时修改当前端子的最终线缆编号（修改后重新待确认）</label>
       <p v-if="syncSource">表格将从 {{ sourceRecord?.cable || '（空白）' }} 改为 {{ text || '（空白）' }}</p>
       </template>

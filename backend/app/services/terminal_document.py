@@ -75,7 +75,7 @@ class TerminalDocumentService:
                 if not changed.rowcount:
                     raise HTTPException(409, "Terminal points changed; reload")
                 revision += 1
-        # Suggestions track source changes only until the user has edited/confirmed the record.
+        # Unconfirmed values follow subsequent source revisions, including manual edits and transfers.
         active = {p["id"] for p in page.get("terminal_points") or []}
         refreshed = False
         for record in records:
@@ -88,7 +88,7 @@ class TerminalDocumentService:
                 record["sourceChanged"] = record.get("sourceRevision", 0) != source["revision"]
                 record["sourceText"] = public["display_text"]
                 record["currentSourceRevision"] = source["revision"]
-                if not record.get("manual") and not record.get("manualConfirmed") and not record["sourceUnavailable"]:
+                if not record.get("manualConfirmed") and not record["sourceUnavailable"] and record.get("sourceRevision", 0) != source["revision"]:
                     refreshed = refreshed or record.get("sourceRevision", 0) != source["revision"] or record["cable"] != public["display_text"]
                     record["cable"] = public["display_text"]
                     record["sourceRevision"] = source["revision"]
@@ -152,7 +152,7 @@ class TerminalDocumentService:
                 db.execute(update(results).where(results.c.id == source.result_id).values(current_revision=revision, current_correction=correction))
                 for record in records:
                     if record.get("sourceResultId") == source.result_id:
-                        if body.sync_record_id == record["id"] or (not record.get("manual") and not record.get("manualConfirmed")):
+                        if body.sync_record_id == record["id"] or (not record.get("manualConfirmed")):
                             record["cable"] = source.text
                             record["sourceRevision"] = revision
                             if body.sync_record_id == record["id"]:
@@ -175,6 +175,6 @@ def effective_records(db, page):
     for r in records:
         rid = r.get("sourceResultId")
         source = db.execute(select(results).where(results.c.id == rid)).mappings().first() if rid else None
-        if source and source["review_status"] not in {"deleted", "false_positive"} and not r.get("manual") and not r.get("manualConfirmed"):
+        if source and source["review_status"] not in {"deleted", "false_positive"} and not r.get("manualConfirmed") and r.get("sourceRevision", 0) != source["current_revision"]:
             r["cable"] = source["current_correction"]["corrected_text"] if source["current_correction"] else source["text"]
     return [r for r in records if r["terminalPointId"] is None or r["terminalPointId"] in active]
