@@ -12,7 +12,7 @@ from .config import DemoConfig
 from .models import CodeAssessment
 
 
-ALLOWED_CHARACTERS = frozenset("0123456789ABCDHJKPUWX-/")
+ALLOWED_CHARACTERS = frozenset("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-/")
 _CONFUSION_GROUPS = ("8B", "0OD", "1IJ", "5S", "2Z")
 MASK_PLACEHOLDER = "#"
 _FORMAT_PREFIXES = "HJXKUW"
@@ -39,6 +39,14 @@ def mask_invalid_characters(raw_text: str) -> str:
         character if character in ALLOWED_CHARACTERS else MASK_PLACEHOLDER
         for character in normalize_terminal_text(raw_text)
     )
+
+
+def remove_invalid_characters(raw_text: str) -> str:
+    """Show surviving OCR characters; use # only when all were invalid."""
+
+    normalized = normalize_terminal_text(raw_text)
+    cleaned = "".join(character for character in normalized if character in ALLOWED_CHARACTERS)
+    return cleaned or (MASK_PLACEHOLDER if normalized else "")
 
 
 def _wildcard_matches(masked: str, candidate: str) -> bool:
@@ -130,7 +138,7 @@ class TerminalCodeRules:
             else:
                 rule_status = "masked_unresolved"
             return self._assessment(
-                raw_text, normalized, output_text=masked, recommended_code=None,
+                raw_text, normalized, output_text=remove_invalid_characters(normalized), recommended_code=None,
                 candidate_codes=candidates, rule_status=rule_status,
                 match_method="masked_wildcard", edit_count=masked.count(MASK_PLACEHOLDER),
                 review_status="unresolved",

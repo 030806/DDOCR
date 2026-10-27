@@ -117,9 +117,9 @@ def test_custom_onnx_model_requires_matching_keys(monkeypatch: pytest.MonkeyPatc
         OcrSettings.from_env()
 
 
-def test_illumination_defaults_off_and_rejects_unknown_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_illumination_defaults_to_he_and_rejects_unknown_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DDOCR_OCR_ILLUMINATION", raising=False)
-    assert OcrSettings.from_env().illumination == "none"
+    assert OcrSettings.from_env().illumination == "he"
     monkeypatch.setenv("DDOCR_OCR_ILLUMINATION", "clahe")
     assert OcrSettings.from_env().illumination == "clahe"
     monkeypatch.setenv("DDOCR_OCR_ILLUMINATION", "unknown")
@@ -137,8 +137,8 @@ def test_each_job_can_override_illumination_without_changing_the_shared_engine(t
     for mode in ("he", "clahe", "none"):
         wrapper.run(Image.new("RGB", (20, 10)), [region()], illumination=mode)
     wrapper.run(Image.new("RGB", (20, 10)), [region()])
-    assert seen == ["he", "clahe", "none", "none"]
-    assert wrapper.settings.illumination == "none"
+    assert seen == ["he", "clahe", "none", "he"]
+    assert wrapper.settings.illumination == "he"
     with pytest.raises(ValueError, match="illumination"):
         wrapper.run(Image.new("RGB", (20, 10)), [region()], illumination="unknown")
 

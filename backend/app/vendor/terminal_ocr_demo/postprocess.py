@@ -312,7 +312,7 @@ def _merge_horizontal_fragments(
             left, raw_text=raw_text, ocr_score=min(_score(left), _score(right)),
             text_bbox_original=_merged_polygon(left, right), assessment=assessment,
             output_text=assessment.output_text,
-            is_unresolved=not bool(assessment.output_text) or "#" in assessment.output_text,
+            is_unresolved=assessment.review_status == "unresolved" or not bool(assessment.output_text),
             cluster_id=f"{left.cluster_id}+{right.cluster_id}",
         )
         audit.append({
@@ -358,7 +358,7 @@ def postprocess_detections(
                     selected,
                     output_text=output_text,
                     cluster_id=cluster.cluster_id,
-                    is_unresolved="#" in output_text,
+                    is_unresolved=bool(selected.assessment and selected.assessment.review_status == "unresolved"),
                 )
             )
             for member in members:

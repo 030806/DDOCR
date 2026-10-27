@@ -132,7 +132,7 @@ def test_probability_correction_requires_close_model_score_and_review() -> None:
 
 def test_probability_correction_does_not_guess_weak_or_unconfirmed_codes() -> None:
     weak = postprocess_detections([_detection(-3.0, -0.5)], _rules(), DemoConfig())
-    assert weak.detections[0].output_text == "H#"
+    assert weak.detections[0].output_text == "H"
     assert weak.detections[0].is_unresolved
 
     unconfirmed = replace(
@@ -140,4 +140,4 @@ def test_probability_correction_does_not_guess_weak_or_unconfirmed_codes() -> No
         model_candidates=(ModelTextCandidate("H-", -1.0),),
     )
     result = postprocess_detections([unconfirmed], _rules(), DemoConfig())
-    assert result.detections[0].output_text == "H#"
+    assert result.detections[0].output_text == "H"
