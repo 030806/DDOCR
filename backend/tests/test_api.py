@@ -175,7 +175,7 @@ def test_region_job_can_derive_from_completed_job_without_changing_it(tmp_path: 
     assert source_after == source_before
 
 
-def test_illumination_is_saved_for_region_job_and_inherited_on_rerun(tmp_path: Path) -> None:
+def test_rerun_defaults_to_he_even_when_source_used_none(tmp_path: Path) -> None:
     test_client = client(tmp_path)
     headers = register_headers(test_client)
     file_id = upload_image(test_client, headers)
@@ -183,7 +183,7 @@ def test_illumination_is_saved_for_region_job_and_inherited_on_rerun(tmp_path: P
         "/api/v1/ocr/region-jobs", headers=headers,
         json={
             "name": "HE 选区", "file_id": file_id,
-            "model_id": "mock", "model_version": "1.0.0", "illumination": "he",
+            "model_id": "mock", "model_version": "1.0.0", "illumination": "none",
             "pages": [{"page_no": 1, "regions": [
                 {"client_id": "roi-1", "bbox": [100, 120, 400, 300]},
             ]}],
@@ -193,7 +193,7 @@ def test_illumination_is_saved_for_region_job_and_inherited_on_rerun(tmp_path: P
     source_id = response.json()["data"]["id"]
     wait_for_job(test_client, source_id, headers)
     source = test_client.get(f"/api/v1/ocr/jobs/{source_id}", headers=headers).json()["data"]
-    assert source["options"]["illumination"] == "he"
+    assert source["options"]["illumination"] == "none"
 
     rerun = test_client.post(
         f"/api/v1/ocr/jobs/{source_id}/rerun", headers=headers,

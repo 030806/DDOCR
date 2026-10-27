@@ -16,7 +16,7 @@ class JobCreate(BaseModel):
     model_version: str
     pages: list[int] | None = None
     options: dict[str, Any] = Field(default_factory=dict)
-    illumination: Literal["none", "he", "clahe"] = "none"
+    illumination: Literal["none", "he", "clahe"] = "he"
 
 
 class JobRerunCreate(BaseModel):
@@ -42,7 +42,7 @@ class RegionJobCreate(BaseModel):
     model_id: str
     model_version: str
     pages: list[RegionJobPageCreate] = Field(min_length=1, max_length=1)
-    illumination: Literal["none", "he", "clahe"] = "none"
+    illumination: Literal["none", "he", "clahe"] = "he"
 
 
 class CorrectionCreate(BaseModel):

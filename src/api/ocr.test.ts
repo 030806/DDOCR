@@ -145,7 +145,7 @@ describe('OCR API adapters', () => {
 
     await expect(rerunOcrTask('job-1', { value: 'mock', version: '1.0.0' })).resolves.toBe('job-2')
     expect(post).toHaveBeenCalledWith('/ocr/jobs/job-1/rerun', {
-      model_id: 'mock', model_version: '1.0.0',
+      model_id: 'mock', model_version: '1.0.0', illumination: 'he',
     })
   })
 
@@ -181,12 +181,12 @@ describe('OCR API adapters', () => {
     expect(id).toBe('region-job-1')
     expect(post).toHaveBeenCalledWith('/ocr/region-jobs', {
       name: '端子区域识别', file_id: undefined, source_job_id: 'source-job-1',
-      model_id: 'mock', model_version: '1.0.0',
+      model_id: 'mock', model_version: '1.0.0', illumination: 'he',
       pages: [{ page_no: 1, regions: [{ client_id: 'roi-1', bbox: [100, 120, 400, 300] }] }],
     })
   })
 
-  it('sends the chosen illumination mode for a region job', async () => {
+  it('preserves an explicit API illumination override for a region job', async () => {
     const post = vi.spyOn(apiClient, 'post').mockResolvedValue({
       data: { data: { id: 'region-job-he', status: 'queued' } },
     } as never)
@@ -194,9 +194,9 @@ describe('OCR API adapters', () => {
       name: 'HE 选区', sourceJobId: 'source-job-1',
       model: { value: 'mock', version: '1.0.0' },
       regions: [{ clientId: 'roi-1', bbox: [100, 120, 400, 300] }],
-      illumination: 'he',
+      illumination: 'clahe',
     })
-    expect(post).toHaveBeenCalledWith('/ocr/region-jobs', expect.objectContaining({ illumination: 'he' }))
+    expect(post).toHaveBeenCalledWith('/ocr/region-jobs', expect.objectContaining({ illumination: 'clahe' }))
   })
 
   it('uses the normal job endpoint when preview has no selected regions', async () => {
@@ -209,7 +209,7 @@ describe('OCR API adapters', () => {
 
     await expect(uploadAndCreateOcrTaskFromSelection(file, { value: 'mock', version: '1.0.0' }, []))
       .resolves.toBe('job-full')
-    expect(post).toHaveBeenNthCalledWith(3, '/ocr/jobs', expect.objectContaining({ file_id: 'file-1' }))
+    expect(post).toHaveBeenNthCalledWith(3, '/ocr/jobs', expect.objectContaining({ file_id: 'file-1', illumination: 'he' }))
   })
 
   it('uses the region job endpoint when preview has selected regions', async () => {
@@ -224,7 +224,7 @@ describe('OCR API adapters', () => {
       { clientId: 'roi-1', bbox: [20, 30, 180, 120] },
     ])).resolves.toBe('job-region')
     expect(post).toHaveBeenNthCalledWith(3, '/ocr/region-jobs', expect.objectContaining({
-      file_id: 'file-1', pages: [{ page_no: 1, regions: [{ client_id: 'roi-1', bbox: [20, 30, 180, 120] }] }],
+      file_id: 'file-1', illumination: 'he', pages: [{ page_no: 1, regions: [{ client_id: 'roi-1', bbox: [20, 30, 180, 120] }] }],
     }))
   })
 

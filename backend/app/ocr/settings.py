@@ -60,7 +60,7 @@ class OcrSettings:
     max_concurrency: int
     execution_mode: str
     backend: str = "onnx"
-    illumination: str = "none"
+    illumination: str = "he"
     ctc_min_relative_probability: float = 0.5
     onnx_rec_model_path: Path | None = None
     onnx_rec_keys_path: Path | None = None
@@ -82,7 +82,7 @@ class OcrSettings:
             "DDOCR_OCR_EXECUTION_MODE", "blocking"
         ).strip().lower()
         backend = os.getenv("DDOCR_OCR_BACKEND", "onnx").strip().lower()
-        illumination = os.getenv("DDOCR_OCR_ILLUMINATION", "none").strip().lower()
+        illumination = os.getenv("DDOCR_OCR_ILLUMINATION", "he").strip().lower()
         ctc_min_relative_probability = float(
             os.getenv("DDOCR_OCR_CTC_MIN_RELATIVE_PROBABILITY", "0.5")
         )
