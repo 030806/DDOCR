@@ -1,26 +1,30 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { useRoute } from 'vue-router'
 import type { OcrPage, OcrItem } from '../types/ocr'
 import { loadTerminalDocument, saveTerminalDocument, type TerminalDocument, type TerminalRecord, type SourceChange } from '../api/terminalDocument'
 import { businessSelection } from '../businessSelection'
+import { selectedBusinessSourceIds } from '../businessDeletion'
 import { transferBusinessRows, type BusinessClipboard } from '../businessClipboard'
 import { normalizeGridValue, type GridChange, type GridValues } from '../ocrGridEditing'
 import { sourceCorrectionUnavailable } from '../sourceCorrection'
 import OcrResultGrid from './OcrResultGrid.vue'
 import CorrectionModal from './CorrectionModal.vue'
 const props = defineProps<{ page: OcrPage; selectedTerminalId?: string; selectedSourceId?: string; editingDisabled?: boolean }>()
-const emit = defineEmits<{ selectTerminal: [pointId: string]; changed: []; selectSource: [id: string]; selectBusiness: [selection: { pointId: string; sourceId: string }] }>()
+const emit = defineEmits<{ selectTerminal: [pointId: string]; changed: []; selectSource: [id: string]; selectBusiness: [selection: { pointId: string; sourceId: string }]; review: [ids: string[], status: 'deleted'] }>()
 const job = String(useRoute().params.taskId)
 const pageNo = props.page.no
 const doc = ref<TerminalDocument>({ revision: 0, records: [] })
 const busy = ref(false), loaded = ref(false), failed = ref(false)
 const selected = ref<string[]>([]), active = ref('')
+const activeSourceIds = computed(() => props.page.items.filter(item => item.reviewStatus !== 'deleted' && item.reviewStatus !== 'false_positive').map(item => item.id))
+const deletableRows = computed(() => doc.value.records.filter(row => row.sourceResultId && activeSourceIds.value.includes(row.sourceResultId)).map(row => row.id))
 const sourceOpen = ref(false), sourceTarget = ref<OcrItem>(), sourceRecordId = ref('')
 const syncSource = ref(true)
 const pendingHistory = ref<boolean>()
 const failedInput = ref<{ records: TerminalRecord[]; source?: SourceChange; syncId?: string }>()
+let pendingReload = false
 type Operation = { before: TerminalRecord[]; after: TerminalRecord[]; sourceId?: string; beforeText?: string; afterText?: string; expectedSourceRevision?: number }
 const undo = ref<Operation[]>([]), redo = ref<Operation[]>([])
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value))
@@ -35,7 +39,19 @@ const values = (id: string): GridValues => {
 const rows = computed(() => doc.value.records.filter(r => !r.orphaned).map(r => ({ selectionId: r.id, terminalNumber: r.terminalNumber,
   item: { id: r.id, text: r.cable, score: 1, bbox: [0, 0, 4, 4], comments: [] } as OcrItem,
   hasTerminal: true, requiresTerminalReview: false })))
+function deleteSelectedSources() {
+  if (busy.value || failed.value || props.editingDisabled) return
+  const ids = selectedBusinessSourceIds(doc.value.records, selected.value, activeSourceIds.value)
+  if (!ids.length) return
+  Modal.confirm({
+    title: '确认删除识别结果',
+    content: `将删除所选行关联的 ${ids.length} 条 OCR 结果，列表与表格同步移除这些线号。端子点保留，表格按剩余结果重新匹配。可用“撤销上一次结果操作”恢复。`,
+    okText: '确认删除', okType: 'danger', cancelText: '取消',
+    onOk: () => { emit('review', ids, 'deleted'); selected.value = [] },
+  })
+}
 async function load() {
+  if (busy.value) { pendingReload = true; return }
   busy.value = true
   try {
     const fresh = await loadTerminalDocument(job, pageNo)
@@ -51,10 +67,17 @@ async function load() {
     loaded.value = true; failed.value = false
   }
   catch { failed.value = true; message.error('端子业务记录加载失败，请重试') }
-  finally { busy.value = false }
+  finally { finishBusy() }
+}
+function finishBusy() {
+  busy.value = false
+  if (pendingReload && !failedInput.value) {
+    pendingReload = false
+    void load()
+  }
 }
 onMounted(load)
-watch(() => JSON.stringify([props.page.items.map(i => [i.id, i.revision, i.reviewStatus]), props.page.terminalPoints]), () => { if (!busy.value && !failedInput.value) void load() })
+watch(() => JSON.stringify([props.page.items.map(i => [i.id, i.revision, i.geometryRevision, i.bbox, i.polygon, i.reviewStatus]), props.page.terminalPoints]), () => { if (!failedInput.value) void load() })
 function reflectSource(source?: SourceChange, revision?: number) {
   if (!source) return
   const item = props.page.items.find(i => i.id === source.result_id)
@@ -72,7 +95,7 @@ async function commit(records: TerminalRecord[], source?: SourceChange, syncId?:
     emit('changed')
     return true
   } catch { failed.value = true; failedInput.value = { records: clone(records), source, syncId }; message.error('保存失败或版本冲突，整批输入已保留；可重试或重新加载核对') ; return false }
-  finally { busy.value = false }
+  finally { finishBusy() }
 }
 async function change(changes: GridChange[]) {
   if (busy.value || props.editingDisabled) return
@@ -171,7 +194,7 @@ defineExpose({ pending: () => busy.value || !loaded.value || failed.value, flush
   <div class="business-grid">
     <p class="business-hint">端子最终结果：编辑、粘贴和清空不修改 OCR 列表。包含全部有效识别编号；未匹配端子点的编号点击后定位识别框。</p>
     <div v-if="failed"><button v-if="failedInput" @click="retry">重试保留的整批输入</button><button @click="async () => { await load(); if (!failed) failedInput = undefined }">重新加载（放弃保留输入）</button><details v-if="failedInput"><summary>查看保留的输入</summary><pre>{{ failedInput.records }}</pre></details></div>
-    <OcrResultGrid v-if="loaded" :rows="rows" :clipboard-scope="`${job}:${pageNo}`" :clipboard-source="clipboardSource" @transfer="transfer" :source-reason="sourceReason" :selected-id="active" :selected-ids="selected" :values="values" :statuses="{}" :revision="doc.revision" :can-undo="!!undo.length && !busy" :can-redo="!!redo.length && !busy" :editing-disabled="busy || failed || editingDisabled" @change="change" @select="select" @selection="selected = $event" @undo="history()" @redo="history(true)" @correct-source="correctSource" />
+    <OcrResultGrid v-if="loaded" :rows="rows" :clipboard-scope="`${job}:${pageNo}`" :clipboard-source="clipboardSource" @transfer="transfer" :source-reason="sourceReason" :selected-id="active" :selected-ids="selected" :deletable-ids="deletableRows" :values="values" :statuses="{}" :revision="doc.revision" :can-undo="!!undo.length && !busy" :can-redo="!!redo.length && !busy" :editing-disabled="busy || failed || editingDisabled" @change="change" @select="select" @selection="selected = $event" @undo="history()" @redo="history(true)" @correct-source="correctSource" @delete-selected="deleteSelectedSources" />
     <p v-if="busy" role="status">正在加载或保存整批操作…</p>
     <details><summary>识别来源状态</summary><p v-for="r in doc.records.filter(r => r.sourceChanged || r.sourceUnavailable || r.orphaned)" :key="r.id">{{ r.terminalNumber }}：{{ r.orphaned ? '端子点已移除，记录保留待核对' : r.sourceUnavailable ? '识别来源已失效，业务值已保留' : '识别来源已更新，业务值已保留' }} <button v-if="r.sourceChanged && !r.sourceUnavailable" @click="correctSource({ id: r.id } as OcrItem)">查看来源</button><button v-if="r.sourceChanged && !r.sourceUnavailable" @click="adoptSource(r)">采用识别值</button></p></details>
     <CorrectionModal v-model:open="sourceOpen" :item="sourceTarget" :saving="busy" source-mode :independent="true" :image-url="page.imageUrl" :source-width="page.sourceWidth" :source-height="page.sourceHeight" @save="saveSource">
