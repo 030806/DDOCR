@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { UndoOutlined, RedoOutlined, VerticalAlignBottomOutlined, OrderedListOutlined, FullscreenOutlined, FullscreenExitOutlined, ReloadOutlined } from '@ant-design/icons-vue'
+import { UndoOutlined, RedoOutlined, VerticalAlignBottomOutlined, OrderedListOutlined, FullscreenOutlined, FullscreenExitOutlined, ReloadOutlined, DeleteOutlined } from '@ant-design/icons-vue'
 import { TabulatorFull as Tabulator, type CellComponent, type ColumnDefinition } from 'tabulator-tables'
 import 'tabulator-tables/dist/css/tabulator.min.css'
 import type { OcrItem } from '../types/ocr'
@@ -20,6 +20,7 @@ const props = defineProps<{
   sourceReason?: (item?: OcrItem) => string
   selectedId: string
   selectedIds: string[]
+  deletableIds?: string[]
   values: (id: string) => GridValues
   statuses: Record<string, string>
   revision: number
@@ -35,6 +36,7 @@ const emit = defineEmits<{
   retry: [id: string]
   correctSource: [item: OcrItem]
   transfer: [payload: BusinessClipboard, targets: string[]]
+  deleteSelected: []
 }>()
 const host = ref<HTMLDivElement>()
 const expanded = ref(false)
@@ -360,6 +362,7 @@ onBeforeUnmount(() => { built = false; host.value?.removeEventListener('paste', 
         <span class="toolbar-divider" aria-hidden="true"></span>
         <button @click="fillDown"><VerticalAlignBottomOutlined /> 向下填充</button>
         <button :disabled="editingDisabled || (!numberRangeIds.length && !selectedIds.length)" @click="openNumberDialog"><OrderedListOutlined /> 顺序编号</button>
+        <button v-if="deletableIds" class="ocr-grid-delete" :disabled="editingDisabled || !selectedIds.some(id => deletableIds?.includes(id))" @click="emit('deleteSelected')"><DeleteOutlined /> 删除识别结果</button>
       </div>
       <div v-if="savingCount || failureCount" class="ocr-grid-save-status" role="status" aria-live="polite">
         <span v-if="savingCount" class="saving">正在保存 {{ savingCount }} 行</span>
@@ -434,6 +437,8 @@ button:disabled { opacity:.45; cursor:default; }
 .ocr-grid-actions,.ocr-grid-save-status { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 .ocr-grid-toolbar button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 28px; padding: 0 8px; border: 1px solid transparent; background: transparent; color: #53665e; font: inherit; white-space: nowrap; }
 .ocr-grid-toolbar button:hover:not(:disabled) { background: #eaf3ee; color: #126f57; }
+.ocr-grid-toolbar .ocr-grid-delete { color: #c6534d; }
+.ocr-grid-toolbar .ocr-grid-delete:hover:not(:disabled) { background: #fff1f0; color: #a83d37; }
 .ocr-grid-toolbar button:focus-visible { outline: 2px solid #168b6c; outline-offset: 1px; }
 .ocr-grid-toolbar .icon-action { width: 28px; padding: 0; }
 .toolbar-divider { height: 16px; border-left: 1px solid #dce5df; margin: 0 4px; }

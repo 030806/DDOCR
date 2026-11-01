@@ -220,14 +220,15 @@ watch(() => props.page, () => { selectedIds.value = []; coordinateSorted.value =
       </article>
       <a-empty v-if="!displayedItems.length" description="没有匹配的识别结果" />
     </div>
-    <TerminalBusinessGrid v-if="hasTerminalResult" v-show="viewMode === 'table'" :key="`${route.params.taskId}:${page.no}`" ref="businessGrid" :selected-terminal-id="selectedTerminalId" :selected-source-id="selectedId" :page="page" :editing-disabled="editingDisabled" @select-business="emit('selectBusiness', $event)" @select-terminal="emit('selectTerminal', $event)" @changed="emit('businessChanged')" @select-source="emit('select', $event)" />
+    <TerminalBusinessGrid v-if="hasTerminalResult" v-show="viewMode === 'table'" :key="`${route.params.taskId}:${page.no}`" ref="businessGrid" :selected-terminal-id="selectedTerminalId" :selected-source-id="selectedId" :page="page" :editing-disabled="editingDisabled" @select-business="emit('selectBusiness', $event)" @select-terminal="emit('selectTerminal', $event)" @changed="emit('businessChanged')" @select-source="emit('select', $event)" @review="(ids, status) => emit('review', ids, status)" />
     <OcrResultGrid v-if="viewMode === 'table' && !hasTerminalResult" :rows="gridRows" :selected-id="selectedId"
       :terminal-count="hasTerminalResult ? (page.terminalPoints?.length || 0) : undefined" :model-terminal-count="page.terminalModelCount" :editing-disabled="editingDisabled"
       :selected-ids="selectedIds" :values="editing.values" :statuses="editing.state.status" :revision="editing.state.revision"
+      :deletable-ids="page.items.filter(item => item.reviewStatus !== 'deleted' && item.reviewStatus !== 'false_positive').map(item => item.id)"
       :can-undo="!!editing.state.undo.length" :can-redo="!!editing.state.redo.length"
       @correct-source="async item => { if (await flushPendingEdits()) emit('correctSource', item); else message.warning('请先完成表格保存并处理失败或冲突') }"
       @change="applyGridChanges" @select="emit('select', $event)" @selection="selectedIds = $event"
-      @undo="applyHistory()" @redo="applyHistory(true)" @retry="editing.retry($event)" />
+      @undo="applyHistory()" @redo="applyHistory(true)" @retry="editing.retry($event)" @delete-selected="reviewSelected('deleted')" />
     <footer class="results-footer">
       <button v-if="canUndoReview" class="footer-undo-btn" @click="emit('undo')"><UndoOutlined /> 撤销上一次结果操作</button>
       <span class="dataset-review-hint">确认当前任务的文字和标注框已全部复核</span>

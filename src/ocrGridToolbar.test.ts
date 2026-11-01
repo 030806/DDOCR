@@ -11,6 +11,14 @@ async function render(statuses: Record<string, string> = {}) {
   app.component('a-modal', { render: () => null })
   return renderToString(app)
 }
+async function renderDelete(selectedIds: string[], deletableIds: string[]) {
+  const app = createSSRApp(OcrResultGrid, {
+    rows: [], selectedId: '', selectedIds, deletableIds, values: () => ({}), statuses: {},
+    revision: 0, canUndo: false, canRedo: false,
+  })
+  app.component('a-modal', { render: () => null })
+  return renderToString(app)
+}
 describe('compact OCR grid toolbar', () => {
   it('hides idle save counts and keeps accessible disabled history controls', async () => {
     const html = await render()
@@ -31,5 +39,10 @@ describe('compact OCR grid toolbar', () => {
     expect(html).toContain('1 行失败或冲突')
     expect(html).not.toContain('重试失败项')
     expect(html).not.toContain('正在保存')
+  })
+  it('shows table deletion only for selected rows with an active OCR source', async () => {
+    expect(await render()).not.toContain('删除识别结果')
+    expect(await renderDelete(['terminal:a'], ['terminal:a'])).toContain('删除识别结果')
+    expect(await renderDelete(['terminal:b'], ['terminal:a'])).toMatch(/ocr-grid-delete" disabled/)
   })
 })
