@@ -727,6 +727,54 @@ def test_terminal_record_is_bound_editable_and_idempotent(tmp_path):
     assert records[0]["table_note"] == "人工补录"
 
 
+def test_manually_added_ocr_box_is_visible_in_existing_terminal_document(tmp_path):
+    api = client(tmp_path)
+    job_id, headers = workflow(api)
+    prefix = f"/api/v1/ocr/jobs/{job_id}/pages/1"
+    points = api.put(prefix + "/terminal-points", headers=headers, json={
+        "base_revision": 0, "points": [
+            {"id": "occupied", "x": 100, "y": 275},
+            {"id": "vacant", "x": 100, "y": 1000},
+        ],
+    })
+    assert points.status_code == 200
+    before = api.get(prefix + "/terminal-document", headers=headers).json()["data"]
+    assert next(r for r in before["records"] if r["id"] == "terminal:vacant")["sourceResultId"] is None
+
+    saved = api.post(prefix + "/result-edits", headers=headers, json={"creates": [{
+        "client_id": "draft-vacant", "bbox": [300, 970, 500, 1030],
+        "polygon": [[300, 970], [500, 970], [500, 1030], [300, 1030]],
+        "text": "X36D",
+    }]})
+    assert saved.status_code == 200
+    new_id = saved.json()["data"]["created"][0]["id"]
+    after = api.get(prefix + "/terminal-document", headers=headers).json()["data"]
+    vacant = next(r for r in after["records"] if r["id"] == "terminal:vacant")
+    assert (vacant["sourceResultId"], vacant["cable"]) == (new_id, "X36D")
+    assert after["revision"] > before["revision"]
+
+    saved = api.post(prefix + "/result-edits", headers=headers, json={"creates": [{
+        "client_id": "draft-occupied", "bbox": [300, 250, 500, 300],
+        "polygon": [[300, 250], [500, 250], [500, 300], [300, 300]],
+        "text": "X38D",
+    }]})
+    assert saved.status_code == 200
+    extra_id = saved.json()["data"]["created"][0]["id"]
+    exported = api.post(f"/api/v1/ocr/jobs/{job_id}/exports", headers=headers,
+                        json={"format": "xlsx", "mode": "simple", "scope": "all_pages"})
+    assert exported.status_code == 202
+    export_id = exported.json()["data"]["id"]
+    download = api.get(f"/api/v1/ocr/jobs/{job_id}/exports/{export_id}/download", headers=headers)
+    workbook = load_workbook(BytesIO(download.content), read_only=True)
+    assert any(row[1:] == ("1", "X38D") for row in workbook["端子对照表"].iter_rows(min_row=2, values_only=True))
+    final = api.get(prefix + "/terminal-document", headers=headers).json()["data"]
+    matched = next(r for r in final["records"] if r["sourceResultId"] == extra_id)
+    assert matched["cable"] == "X38D"
+    assert matched["terminalPointId"] == "occupied"
+    assert matched["terminalNumber"] == "1"
+    assert sum(r["sourceResultId"] == extra_id for r in final["records"]) == 1
+
+
 def test_terminal_document_isolates_values_and_atomically_corrects_source(tmp_path):
     from copy import deepcopy
     test_client = client(tmp_path)
@@ -788,7 +836,7 @@ def test_terminal_document_isolates_values_and_atomically_corrects_source(tmp_pa
     assert len(test_client.get(prefix + "/results", headers=headers).json()["data"]["items"]) == len(original)
 
 
-def test_list_correction_follows_only_unedited_business_and_keeps_value_after_source_deletion(tmp_path):
+def test_list_correction_follows_unedited_business_and_deleted_source_leaves_table(tmp_path):
     api = client(tmp_path)
     job, headers = workflow(api)
     prefix = f"/api/v1/ocr/jobs/{job}/pages/1"
@@ -805,8 +853,8 @@ def test_list_correction_follows_only_unedited_business_and_keeps_value_after_so
     api.post("/api/v1/ocr/results/review-status", headers=headers,
               json={"result_ids": [source_id], "review_status": "deleted"})
     after = api.get(prefix + "/terminal-document", headers=headers).json()["data"]
-    assert after["records"][0]["cable"] == "LIST-CORRECTED"
-    assert after["records"][0]["sourceUnavailable"] is True
+    assert all(row["sourceResultId"] != source_id for row in after["records"])
+    assert all(row["cable"] != "LIST-CORRECTED" for row in after["records"])
 
 
 def test_business_cut_moves_source_association_and_undo_restores_it(tmp_path):

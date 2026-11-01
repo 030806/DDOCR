@@ -7,6 +7,7 @@ from sqlalchemy import select, insert, update
 from sqlalchemy.orm import Session
 from app.models.schema import terminal_documents, pages, results, ocr_jobs, corrections, users
 from app.terminal_pair.match import terminal_pair_rows
+from app.terminal_pair.document_records import reconcile_matches
 
 
 def seeded_records(page, items):
@@ -23,7 +24,7 @@ def seeded_records(page, items):
                        "cable": (item or {}).get("display_text", ""),
                        "manualConfirmed": bool((item or {}).get("manual_confirmed")),
                        "tableNote": (item or {}).get("table_note", ""),
-                       "manual": legacy or bool(item and (item.get("current_correction") or item.get("table_revision"))),
+                       "manual": legacy or bool(item and item.get("table_revision")),
                        "sourceRevision": (item or {}).get("revision", 0)})
     represented = {item["id"] for item in matched if item}
     for item in items:
@@ -33,7 +34,7 @@ def seeded_records(page, items):
                        "sourceResultId": item["id"], "terminalNumber": item.get("terminal_number") or "",
                        "cable": item.get("display_text", ""), "manualConfirmed": bool(item.get("manual_confirmed")),
                        "tableNote": item.get("table_note", ""),
-                       "manual": bool(item.get("current_correction") or item.get("table_revision")),
+                       "manual": bool(item.get("table_revision")),
                        "sourceRevision": item.get("revision", 0)})
     return output
 
@@ -62,13 +63,11 @@ class TerminalDocumentService:
                                                 if self.core.result(rid).get("review_status") not in {"deleted", "false_positive"}])
                 revision = 0
                 db.execute(insert(terminal_documents).values(page_id=page["id"], revision=0, records=records))
-        seed = seeded_records(page, [self.core.public_result(self.core.result(rid)) for rid in page["result_ids"]
-                                    if self.core.result(rid).get("review_status") not in {"deleted", "false_positive"}])
-        existing_ids = {r["id"] for r in records}
-        represented = {r.get("sourceResultId") for r in records if r.get("sourceResultId")}
-        additions = [r for r in seed if r["id"] not in existing_ids and (r["terminalPointId"] is not None or r.get("sourceResultId") not in represented)]
-        if additions:
-            records.extend(additions)
+        active_items = [self.core.public_result(self.core.result(rid)) for rid in page["result_ids"]
+                        if self.core.result(rid).get("review_status") not in {"deleted", "false_positive"}]
+        seed = seeded_records(page, active_items)
+        active_point_ids = {str(point["id"]) for point in page.get("terminal_points") or []}
+        if reconcile_matches(records, seed, active_items, active_point_ids):
             with Session(self.engine) as db, db.begin():
                 changed = db.execute(update(terminal_documents).where(terminal_documents.c.page_id == page["id"],
                                      terminal_documents.c.revision == revision).values(records=records, revision=revision + 1))
@@ -172,6 +171,19 @@ def effective_records(db, page):
         return None
     records = deepcopy(doc["records"])
     active = {p["id"] for p in page.get("terminal_points") or []}
+    source_rows = db.execute(select(results).where(results.c.id.in_(page["result_ids"]))).mappings().all()
+    by_id = {row["id"]: row for row in source_rows}
+    items = []
+    for result_id in page["result_ids"]:
+        row = by_id.get(result_id)
+        if not row or row["review_status"] in {"deleted", "false_positive"}:
+            continue
+        item = dict(row)
+        item["attributes"] = row["attributes"] or {}
+        item["display_text"] = row["current_correction"]["corrected_text"] if row["current_correction"] else row["text"]
+        item["revision"] = row["current_revision"]
+        items.append(item)
+    reconcile_matches(records, seeded_records(page, items), items, active)
     for r in records:
         rid = r.get("sourceResultId")
         source = db.execute(select(results).where(results.c.id == rid)).mappings().first() if rid else None
