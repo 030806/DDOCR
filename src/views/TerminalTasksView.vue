@@ -73,7 +73,7 @@ onMounted(() => load(true))
     <div v-for="task in tasks" :key="task.id" class="terminal-card">
       <div><strong>{{ task.name }}</strong><p>左侧：{{ task.sides.left ? task.sides.left.status === 'unavailable' ? '来源已删除' : '已识别' : '待上传' }} · 右侧：{{ task.sides.right ? task.sides.right.status === 'unavailable' ? '来源已删除' : '已识别' : '待上传' }}</p>
       <span>{{ task.row_count }} 行 · {{ task.confirmed_count }} 行已确认 · {{ task.conflict_count }} 行冲突</span></div>
-      <a-button :disabled="Boolean(deletingTaskId)" @click="router.push(terminalSidePath(task.id, 'left', task.sides.left?.job_id))">打开任务</a-button>
+      <a-button :disabled="Boolean(deletingTaskId)" @click="router.push(terminalSidePath(task.id, 'left'))">打开任务</a-button>
       <a-button :disabled="Boolean(deletingTaskId)" @click="router.push(`/terminal-tasks/${task.id}/merged`)">合并结果</a-button>
       <a-button danger :loading="deletingTaskId === task.id" :disabled="busy || Boolean(deletingTaskId)" @click="confirmDelete(task)">删除</a-button>
     </div>

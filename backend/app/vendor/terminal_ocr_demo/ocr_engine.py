@@ -167,6 +167,18 @@ class PaddleOCREngine:
             self._ocr = factory(self.config)
         return self._ocr
 
+    def detect(self, image: Image.Image) -> list:
+        """Use Paddle's standalone detector, without running recognition."""
+        from paddleocr import TextDetection
+        if not hasattr(self, "_position_detector"):
+            self._position_detector = TextDetection(model_name=self.config.det_model_name, device=self.config.device, enable_mkldnn=False)
+        boxes = []
+        for result in self._position_detector.predict(np.asarray(image.convert("RGB"))):
+            payload = _to_plain(result)
+            payload = payload.get("res", payload)
+            boxes.extend(payload.get("dt_polys", []))
+        return boxes
+
     def recognize(self, image: Image.Image) -> list[RawOCRRecord]:
         ocr = self._load()
         image_array = np.asarray(image.convert("RGB"))

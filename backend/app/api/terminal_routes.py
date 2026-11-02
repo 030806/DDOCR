@@ -104,3 +104,28 @@ def download(task_id: str, export_id: str, request: Request, authorization: Auth
     content = TerminalService(service(request)).download(task_id, export_id, actor["id"])
     return Response(content, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": 'attachment; filename="terminal-results.xlsx"'})
+
+
+class WorkflowRegion(BaseModel):
+    id: str = Field(min_length=1, max_length=100)
+    bbox: tuple[float, float, float, float]
+
+
+class SideWorkflowCreate(BaseModel):
+    file_id: str
+    replace: bool = False
+    regions: list[WorkflowRegion] | None = Field(default=None, min_length=1, max_length=20)
+
+
+@router.get('/{task_id}/sides/{side}/workflow')
+def side_workflow(task_id: str, side: Literal['left', 'right'], request: Request, authorization: Auth = None):
+    from app.services.terminal_workflow import TerminalWorkflowService
+    owner = authenticated_user(request, authorization)['id']
+    return envelope(TerminalWorkflowService(service(request)).side_workflow(task_id, side, owner))
+
+
+@router.post('/{task_id}/sides/{side}/workflows')
+def create_side_workflow(task_id: str, side: Literal['left', 'right'], body: SideWorkflowCreate, request: Request, authorization: Auth = None):
+    from app.services.terminal_workflow import TerminalWorkflowService
+    owner = authenticated_user(request, authorization)['id']
+    return envelope(TerminalWorkflowService(service(request)).create_bound(task_id, side, body.file_id, owner, body.replace, [dict(id=r.id,bbox=list(r.bbox)) for r in body.regions] if body.regions is not None else None))

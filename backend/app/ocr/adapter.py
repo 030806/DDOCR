@@ -117,6 +117,10 @@ class OcrAdapter:
 
         self._engine: TerminalOcrEngine = engine
 
+    def detect_positions(self, source_path: Path, regions: Sequence[OcrRegion]) -> list[dict]:
+        with Image.open(source_path) as image:
+            return self._engine.detect_positions(image.convert("RGB"), regions)
+
     def recognize_file(
         self,
         source_path: Path,

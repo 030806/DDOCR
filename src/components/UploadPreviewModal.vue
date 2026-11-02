@@ -6,7 +6,7 @@ import { isPreviewableImage, rotateImageFile } from '../imageUpload'
 import type { RegionDraft } from '../api/ocr'
 import { copyRegions, MAX_OCR_REGIONS, regionBboxFromPoints } from '../regionSelection'
 
-const props = defineProps<{ open: boolean; file?: File; initialRegions?: RegionDraft[] }>()
+const props = defineProps<{ open: boolean; file?: File; initialRegions?: RegionDraft[]; defaultRegionSelection?: boolean }>()
 const emit = defineEmits<{ close: []; delete: []; save: [file: File, regions: RegionDraft[]] }>()
 const workingFile = ref<File>()
 const saving = ref(false)
@@ -35,7 +35,7 @@ watch(() => [props.open, props.file] as const, ([open, file]) => {
   imageHeight.value = 0
   if (!open) return
   regions.value = copyRegions(props.initialRegions || [])
-  selecting.value = regions.value.length > 0
+  selecting.value = Boolean(props.defaultRegionSelection) || regions.value.length > 0
   if (file) previewUrl.value = URL.createObjectURL(file)
 }, { immediate: true })
 

@@ -80,6 +80,9 @@ def terminal_pair_rows(
              if str(item.get("attributes", {}).get("terminal_point_id")) in point_ids}
     items = [item for item in items if str(item.get("attributes", {}).get("terminal_point_id")) not in point_ids]
     pitch = _terminal_pitch(ordered_points)
+    explicit_unmatched = [item for item in items if item.get("attributes", {}).get("workflow_confirmed")]
+    items = [item for item in items if not item.get("attributes", {}).get("workflow_confirmed")]
+    unmatched.extend(explicit_unmatched)
     proposals = [(item, *_nearest_point(item, ordered_points, pitch)) for item in items] if ordered_points else []
     use_center = _assignments_cross(proposals)
     if not ordered_points:
@@ -102,7 +105,7 @@ def terminal_pair_rows(
             unmatched.append(item)
     rows: list[tuple[float, int, float, str, str, dict[str, Any] | None]] = []
     for index, point in enumerate(ordered_points, start=1):
-        rows.append((float(point["y"]), 0, float(point["x"]), str(point["id"]), str(index),
+        rows.append((float(point["y"]), 0, float(point["x"]), str(point["id"]), str(point.get("terminal_number", index)),
                      bound.get(str(point["id"])) or winners.get(str(point["id"]), (None, None))[0]))
     for item in unmatched:
         center_x, center_y = _center(item)

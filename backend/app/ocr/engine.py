@@ -93,6 +93,27 @@ class TerminalOcrEngine:
                     f"Terminal OCR inference failed: {type(exc).__name__}: {exc}"
                 ) from exc
 
+    def detect_positions(self, image: Image.Image, regions: Sequence[OcrRegion]) -> list[dict]:
+        """Locate text in ROI crops without invoking the recognition pipeline."""
+        from math import floor, ceil
+        with self._lock:
+            engine = self._load_unlocked()
+            detector = getattr(engine, "detect", None)
+            if not callable(detector):
+                raise OcrInferenceError("当前引擎不支持独立文字位置检测")
+            output = []
+            for region in regions:
+                x1,y1,x2,y2 = region.bbox
+                left, top = floor(x1), floor(y1)
+                crop = image.crop((left, top, ceil(x2), ceil(y2)))
+                for polygon in detector(crop):
+                    xs = [float(p[0]) + left for p in polygon]
+                    ys = [float(p[1]) + top for p in polygon]
+                    box = [max(x1,min(xs)), max(y1,min(ys)), min(x2,max(xs)), min(y2,max(ys))]
+                    if box[0] < box[2] and box[1] < box[3]:
+                        output.append({"bbox":box, "region_id":region.roi_id})
+            return output
+
     def close(self) -> None:
         """Release the retained engine and invoke its optional close hook.
 

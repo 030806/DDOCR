@@ -23,3 +23,10 @@ def test_keeps_empty_terminal_row_and_legacy_manual_record_without_duplicate():
     legacy = {**line("manual", 100), "attributes": {"terminal_point_id": "p"}}
     records = seeded_records({"terminal_points": [{"id": "p", "x": 10, "y": 100}, {"id": "q", "x": 10, "y": 300}]}, [legacy, line("OCR", 105)])
     assert {r["id"] for r in records} == {"terminal:p", "terminal:q", "ocr:OCR"}
+
+def test_confirmed_point_number_wins_over_automatic_ocr_sequence():
+    page={'terminal_points':[{'id':'p','x':10,'y':100,'terminal_number':'Z'},{'id':'q','x':10,'y':200,'terminal_number':'AA'}]}
+    item={**line('ocr',100),'terminal_number':'1','table_revision':0}
+    assert [r['terminalNumber'] for r in seeded_records(page,[item])]==['Z','AA']
+    manual={**item,'terminal_number':'USER-A','table_revision':1}
+    assert seeded_records(page,[manual])[0]['terminalNumber']=='USER-A'

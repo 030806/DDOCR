@@ -66,6 +66,11 @@ def merge_rows(sources, links, reviews):
                        "note": note})
     def natural(row):
         return [(1, int(p)) if p.isdigit() else (0, p) for p in re.split(r"(\d+)", row["terminal_number"])]
+    if output and all(re.fullmatch(r'[A-Za-z]+', row['terminal_number']) for row in output):
+        return sorted(output, key=lambda row: (len(row['terminal_number']), row['terminal_number'].upper(), row['terminal_number']))
+    letter_tails = [re.fullmatch(r'(.*[^A-Za-z])([A-Za-z]+)', row['terminal_number']) for row in output]
+    if output and all(letter_tails) and len({m.group(1) for m in letter_tails}) == 1:
+        return sorted(output, key=lambda row: (len(re.search(r'[A-Za-z]+$', row['terminal_number']).group()), row['terminal_number'].upper(), row['terminal_number']))
     return sorted(output, key=natural)
 
 

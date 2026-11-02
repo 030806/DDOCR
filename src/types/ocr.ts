@@ -39,6 +39,7 @@ export type OcrReviewStatus = 'unreviewed' | 'confirmed' | 'false_positive' | 'd
 export type IlluminationMode = 'none' | 'he' | 'clahe'
 
 export type TerminalPoint = {
+  terminal_number?: string
   id: string
   x: number
   y: number

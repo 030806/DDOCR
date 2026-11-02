@@ -133,6 +133,11 @@ class OnnxRecognizerEngine:
             self._ocr = factory()
         return self._ocr
 
+    def detect(self, image: Image.Image) -> list:
+        """Run only the detection model; never call text_rec or classification."""
+        boxes, _ = self._load().text_det(np.asarray(image.convert("RGB"))[..., ::-1].copy())
+        return [] if boxes is None else boxes.tolist() if hasattr(boxes, "tolist") else list(boxes)
+
     def recognize(self, image: Image.Image) -> list[RawOCRRecord]:
         """Recognize one image and return normalized pipeline records."""
 

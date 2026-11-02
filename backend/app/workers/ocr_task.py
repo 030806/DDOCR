@@ -53,7 +53,13 @@ class OcrTaskWorker:
         )
         service.page_repository.update_state(page_id, status="running", error=None)
         terminal_future = None
+        snapshot = service.store.get("terminal_workflow_snapshot", job_id)
         terminal_result: dict = {}
+        if snapshot:
+            from app.services.terminal_workflow import TerminalWorkflowService
+            from app.terminal_pair.numbering import terminal_label
+            active_ids = TerminalWorkflowService(service).ordered(snapshot)
+            terminal_result = {"terminal_model_points": snapshot["model_points"], "terminal_points": [{**p, "terminal_number": terminal_label(snapshot["ordering"], active_ids.index(p["id"]))} for p in snapshot["points"] if p["id"] in active_ids], "terminal_error": None}
         try:
             service.jobs.update_state(
                 job_id, status="running", stage="recognizing", progress=20,
@@ -61,7 +67,7 @@ class OcrTaskWorker:
             uploaded_file = service.file(job["file_id"])
             source_path = service.content_path(uploaded_file)
             is_image = (uploaded_file.get("actual_media_type") or uploaded_file.get("media_type") or "").startswith("image/")
-            if is_image:
+            if is_image and not snapshot:
                 if service.terminal_detector is not None:
                     terminal_future = self._terminal_executor.submit(
                         service.terminal_detector.detect,
@@ -81,12 +87,19 @@ class OcrTaskWorker:
                         OcrRegion(roi_id=item["id"], bbox=tuple(item["bbox"]))
                         for item in region_context["regions"]
                     ]
-                    with Image.open(source_path) as opened_image:
-                        opened_image.load()
-                        result = service.ocr_adapter.recognize_image(
-                            opened_image.convert("RGB"), regions=regions,
-                            options=job.get("options", {}),
-                        )
+                    if snapshot and snapshot.get("matching_mode") != "auto":
+                        regions = [OcrRegion(roi_id=b["point_id"], bbox=tuple(b["bbox"]))
+                                   for b in snapshot["bindings"] if not b.get("empty")]
+                    if snapshot and not regions:
+                        from app.ocr.contracts import AdapterPageResult
+                        result = AdapterPageResult((), {}, 0)
+                    else:
+                        with Image.open(source_path) as opened_image:
+                            opened_image.load()
+                            result = service.ocr_adapter.recognize_image(
+                                opened_image.convert("RGB"), regions=regions,
+                                options=job.get("options", {}),
+                            )
                 else:
                     result = service.ocr_adapter.recognize_file(
                         source_path, options=job.get("options", {}),
@@ -145,6 +158,9 @@ class OcrTaskWorker:
                     "polygon": [list(point) for point in detection.polygon],
                     "attributes": attributes,
                 })
+            if snapshot and snapshot.get("matching_mode") != "auto":
+                from app.terminal_pair.workflow_binding import bind_results
+                bind_results(items, snapshot)
             page_error = ocr_error or (
                 {"code": "OCR_PARTIAL_FAILURE", "roi_errors": result.roi_errors}
                 if result and result.roi_errors else None
@@ -156,6 +172,14 @@ class OcrTaskWorker:
             )
             if result is not None:
                 service.hide_rerun_source(job_id)
+            if snapshot and snapshot.get('terminal_task_id'):
+                from app.services.terminal_workflow import TerminalWorkflowService
+                # Adoption failures must not turn a persisted OCR result into a failed job.
+                try:
+                    TerminalWorkflowService(service).complete(snapshot, job_id, status)
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception('Could not adopt workflow result %s', job_id)
         except Exception as exc:
             code = exc.code if isinstance(exc, OcrError) else "OCR_TASK_FAILED"
             message = f"{type(exc).__name__}: {exc}"

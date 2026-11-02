@@ -111,3 +111,18 @@ it('keeps manually recorded values bound to their terminal and preserves displac
   expect(rows.some(row => !row.hasTerminal && row.item?.id === 'original')).toBe(true)
   expect(rows.find(row => row.terminalNumber === '2')?.item).toBeUndefined()
 })
+
+it('keeps workflow point labels on matched and empty terminal rows',()=>{
+  const points=[{...point('p',10),terminal_number:'Z'},{...point('q',100),terminal_number:'AA'}]
+  const rows=terminalTableRows(points,[line('a',10)])
+  expect(rows.map(r=>r.terminalNumber)).toEqual(['Z','AA'])
+  expect(gridTerminalNumber(rows[0]!, '')).toBe('Z')
+  expect(terminalTableRows(points,[{...line('a',10),terminalNumber:'1'}])[0]!.terminalNumber).toBe('Z')
+  expect(terminalTableRows(points,[{...line('a',10),terminalNumber:'USER',tableRevision:1}])[0]!.terminalNumber).toBe('USER')
+})
+
+it('uses point numbering in grid while retaining unsaved edits',()=>{
+  const row=terminalTableRows([{...point('p',10),terminal_number:'AA'}],[{...line('a',10),terminalNumber:'1'}])[0]!
+  expect(gridTerminalNumber(row,'1')).toBe('AA')
+  expect(gridTerminalNumber(row,'MY-1')).toBe('MY-1')
+})

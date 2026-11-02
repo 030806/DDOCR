@@ -477,6 +477,7 @@ class MockOcrService:
         body: RegionJobCreate,
         owner_id: str,
         rerun_source_job_id: str | None = None,
+        workflow_snapshot: dict | None = None,
     ) -> dict[str, Any]:
         if bool(body.file_id) == bool(body.source_job_id):
             raise HTTPException(422, "Exactly one of file_id and source_job_id is required")
@@ -548,6 +549,8 @@ class MockOcrService:
         )
         if self.job_submitter is None:
             raise HTTPException(503, "OCR worker is not available")
+        if workflow_snapshot is not None:
+            self.store.put("terminal_workflow_snapshot", job_id, workflow_snapshot)
         self.job_submitter(job_id)
         return {key: job[key] for key in ("id", "status", "stage", "progress", "created_at")}
 
@@ -634,8 +637,10 @@ class MockOcrService:
         job = self.job(job_id, owner_id)
         uploaded_file = self.file(job["file_id"], owner_id)
         pages = [self.page_repository.get(page_id) for page_id in job["page_ids"]]
+        from app.terminal_pair.numbering import page_with_workflow_numbers
+        snapshot = self.store.get("terminal_workflow_snapshot", job_id)
         public_pages = [
-            self._public_page(page) for page in pages if page is not None
+            self._public_page(page_with_workflow_numbers(page, snapshot)) for page in pages if page is not None
         ]
         content_path = self.content_path(uploaded_file)
         is_image = uploaded_file.get("media_type", "").startswith("image/")

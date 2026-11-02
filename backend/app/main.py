@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from app.api.routes import router
 from app.api.dataset_routes import router as dataset_router
 from app.api.terminal_routes import router as terminal_router
+from app.api.terminal_workflow_routes import router as workflow_router
 from app.models.store import Store
 from app.ocr.adapter import OcrAdapter
 from app.ocr.contracts import OcrAdapterProtocol
@@ -60,6 +61,7 @@ def create_app(
     app.include_router(router)
     app.include_router(dataset_router)
     app.include_router(terminal_router)
+    app.include_router(workflow_router)
 
     @app.get("/health")
     def health() -> dict[str, str]:

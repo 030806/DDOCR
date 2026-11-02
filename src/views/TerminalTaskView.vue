@@ -4,6 +4,7 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vu
 import { message } from 'ant-design-vue'
 import { isAxiosError } from 'axios'
 import { associateSide, getTerminalTask, type Side, type TerminalTask } from '../api/terminal'
+import { apiClient } from '../api/client'
 import { getTasks, getTask } from '../api/ocr'
 import type { OcrTask } from '../types/task'
 import { readPendingSides, terminalSidePath, writePendingSides } from '../terminalState'
@@ -12,6 +13,7 @@ import TerminalMergedPanel from '../components/TerminalMergedPanel.vue'
 const route = useRoute()
 const router = useRouter()
 const task = ref<TerminalTask>()
+const sideFlows = ref<Partial<Record<Side, {confirmed:number;job_id:string|null;job_status:string|null}>>>({})
 const busy = ref(false)
 const loading = ref(true)
 const error = ref('')
@@ -47,6 +49,10 @@ async function load() {
     const value = await getTerminalTask(taskId.value)
     if (current !== epoch || disposed) return
     task.value = value
+    const flows=await Promise.allSettled((['left','right'] as Side[]).map(async s=>[s,(await apiClient.get(`/terminal-tasks/${taskId.value}/sides/${s}/workflow`)).data.data] as const))
+    if(current!==epoch || disposed) return
+    sideFlows.value={}
+    for(const result of flows) if(result.status==='fulfilled' && result.value[1]) sideFlows.value[result.value[0]]=result.value[1]
     error.value = ''
   } catch (e) { if (current === epoch && !disposed) showError(e) }
   finally { if (current === epoch && !disposed) loading.value = false }
@@ -62,14 +68,23 @@ watch(() => route.fullPath, () => {
 watch([() => route.params.taskId, () => route.params.side], () => { candidateReady.value = false })
 async function navigate(tab: string) {
   if (!task.value || busy.value) return
+  if (workspace.value?.prepareSideChange && !await workspace.value.prepareSideChange()) return
   if (tab === 'merged') { await router.push(`/terminal-tasks/${taskId.value}/merged`); return }
   const target = tab as Side
+  try {
+    const flow=(await apiClient.get(`/terminal-tasks/${taskId.value}/sides/${target}/workflow`)).data.data
+    if(flow && !flow.job_id) { await router.push(`/terminal-tasks/${taskId.value}/${target}/workflow`); return }
+    if(flow?.job_id && flow.job_id!=='submitting') { await router.push(terminalSidePath(taskId.value,target,flow.job_id)); return }
+  } catch(e) { showError(e); return }
   const candidate = pending.value[target]
   const association = task.value.sides[target]
   await router.push({ path: terminalSidePath(taskId.value, target, candidate || association?.job_id),
     query: candidate ? { attach: '1' } : association ? { page: association.page_no } : {} })
 }
 function sideLabel(target: Side) {
+  const flow=sideFlows.value[target]
+  if(flow && !flow.job_id) return `流程第 ${Math.min(6,flow.confirmed+1)} 步`
+  if(flow && ['queued','running'].includes(flow.job_status || '')) return '识别中'
   if (pending.value[target]) return '待关联'
   return task.value?.sides[target]?.status === 'unavailable' ? '来源不可用' : task.value?.sides[target] ? '已识别' : '待上传'
 }
@@ -85,7 +100,7 @@ async function openPicker() {
 }
 async function bind(jobId: string, pageNo: number) {
   if (!task.value || busy.value) return
-  if (workspace.value && !await workspace.value.prepareSideChange()) return
+  if (workspace.value?.prepareSideChange && !await workspace.value.prepareSideChange()) return
   epoch++
   loading.value = false
   busy.value = true
@@ -106,6 +121,7 @@ async function completed(jobId: string, pageCount: number) {
   candidateReady.value = true
   recordPageCount.value = pageCount
   selectedPage.value = Number(route.query.page) || task.value?.sides[side.value]?.page_no || 1
+  if (route.query.attach !== '1') await load()
   if (route.query.attach === '1' && pageCount === 1) {
     if (!task.value) await load()
     await bind(jobId, 1)
@@ -140,6 +156,7 @@ async function useCurrent() {
     <template v-else-if="task && active !== 'merged'">
       <div class="terminal-toolbar">
         <span>正在处理：{{ side === 'left' ? '左侧' : '右侧' }}（端子排实际方位）</span>
+        <a-button :disabled="busy" @click="router.push({path:`/terminal-tasks/${taskId}/${side}/workflow`,query:{new:'1'}})">重新识别</a-button>
         <a-button :disabled="busy" @click="openPicker">关联已有识别结果</a-button>
         <template v-if="candidateReady">
           <span>关联页</span><a-input-number v-model:value="selectedPage" :min="1" :max="recordPageCount" :precision="0" />
@@ -148,7 +165,7 @@ async function useCurrent() {
         <a-button :disabled="busy" @click="navigate(side === 'left' ? 'right' : 'merged')">{{ side === 'left' ? '保存并查看右侧' : '查看合并结果' }}</a-button>
         <span v-if="route.query.attach === '1'">新识别完成后关联；原结果保留至采用成功</span>
       </div>
-      <RouterView v-slot="{ Component }"><component :is="Component" ref="workspace" :key="`${side}:${route.params.taskId || 'new'}`" @completed="completed" /></RouterView>
+      <RouterView v-slot="{ Component }"><component :is="Component" ref="workspace" :key="`${taskId}:${side}:${String(route.name)}:${route.params.taskId || 'new'}`" @completed="completed" /></RouterView>
     </template>
     <a-modal v-model:open="picker" title="关联已有单侧识别结果" ok-text="关联结果" cancel-text="取消" :confirm-loading="busy" :ok-button-props="{ disabled: !selectedRecord }" @ok="selectedRecord && bind(selectedRecord, selectedPage)">
       <p>请选择该端子排对应侧的识别记录。多页文件需指定页码。</p>

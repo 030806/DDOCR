@@ -15,8 +15,12 @@ export function orderedTerminalPoints(points: TerminalPoint[]): TerminalPoint[] 
   return [...points].sort((a, b) => a.y - b.y || a.x - b.x || a.id.localeCompare(b.id))
 }
 
-export function gridTerminalNumber(row: Pick<TerminalTableRow, 'hasTerminal' | 'terminalNumber'>, saved: string): string {
-  return row.hasTerminal ? saved || row.terminalNumber : ''
+export function gridTerminalNumber(row: Pick<TerminalTableRow, 'hasTerminal' | 'terminalNumber'> & { item?: OcrItem }, saved: string): string {
+  if (!row.hasTerminal) return ''
+  // The OCR row's untouched legacy sequence is not a user edit. Local edits
+  // differing from that value must remain visible before they are saved.
+  if (row.item && !row.item.tableRevision && !row.item.manualConfirmed && saved === row.item.terminalNumber) return row.terminalNumber
+  return saved || row.terminalNumber
 }
 
 function lineCenter(item: OcrItem): { x: number; y: number } {
@@ -123,7 +127,7 @@ export function terminalTableRows(points: TerminalPoint[], items: OcrItem[]): Te
     ...orderedPoints.map((point, index) => {
       const item = bound.get(point.id) || winners.get(point.id)?.item
       return { y: point.y, x: point.x, terminal: true, selectionId: item?.id || `terminal:${point.id}`,
-        terminalNumber: item?.terminalNumber?.trim() || String(index + 1), item }
+        terminalNumber: (item?.tableRevision || item?.manualConfirmed ? item.terminalNumber?.trim() : '') || point.terminal_number?.trim() || item?.terminalNumber?.trim() || String(index + 1), item }
     }),
     ...unmatched.map(item => ({ y: lineCenter(item).y, x: lineCenter(item).x, terminal: false,
       selectionId: item.id, terminalNumber: '', item })),

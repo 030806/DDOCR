@@ -16,11 +16,13 @@ def seeded_records(page, items):
     matched = [item for number, item in pairs if number]
     output = []
     for i, point in enumerate(points):
-        item = matched[i] if i < len(matched) else None
-        legacy = bool(item and item.get("attributes", {}).get("terminal_point_id"))
+        item = next((item for item in items if item.get("attributes", {}).get("terminal_point_id") == point["id"]), None)
+        if item is None and not any(item.get("attributes", {}).get("workflow_confirmed") for item in items):
+            item = matched[i] if i < len(matched) else None
+        legacy = bool(item and item.get("attributes", {}).get("terminal_point_id") and not item.get("attributes", {}).get("workflow_confirmed"))
         output.append({"id": "terminal:" + point["id"], "terminalPointId": point["id"],
                        "sourceResultId": item["id"] if item and not legacy else None,
-                       "terminalNumber": (item or {}).get("terminal_number") or str(i + 1),
+                       "terminalNumber": ((item or {}).get("terminal_number") if (item or {}).get("table_revision") or (item or {}).get("manual_confirmed") else None) or point.get("terminal_number") or (item or {}).get("terminal_number") or str(i + 1),
                        "cable": (item or {}).get("display_text", ""),
                        "manualConfirmed": bool((item or {}).get("manual_confirmed")),
                        "tableNote": (item or {}).get("table_note", ""),
@@ -49,7 +51,8 @@ class TerminalDocumentService:
         page = next((p for pid in job["page_ids"] if (p := self.core.page(pid)) and p["page_no"] == page_no), None)
         if page is None:
             raise HTTPException(404, "Page not found")
-        return page
+        from app.terminal_pair.numbering import page_with_workflow_numbers
+        return page_with_workflow_numbers(page, self.core.store.get("terminal_workflow_snapshot", job_id))
 
     def get(self, job_id, page_no, owner):
         page = self.context(job_id, page_no, owner)
@@ -169,6 +172,10 @@ def effective_records(db, page):
     doc = db.execute(select(terminal_documents).where(terminal_documents.c.page_id == page["id"])).mappings().first()
     if not doc:
         return None
+    from app.models.store import StoredObject
+    from app.terminal_pair.numbering import page_with_workflow_numbers
+    snapshot = db.get(StoredObject, ("terminal_workflow_snapshot", page["job_id"]))
+    page = page_with_workflow_numbers(page, snapshot.data if snapshot else None)
     records = deepcopy(doc["records"])
     active = {p["id"] for p in page.get("terminal_points") or []}
     source_rows = db.execute(select(results).where(results.c.id.in_(page["result_ids"]))).mappings().all()
