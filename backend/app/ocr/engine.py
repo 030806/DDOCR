@@ -71,11 +71,14 @@ class TerminalOcrEngine:
         regions: Sequence[OcrRegion],
         *,
         illumination: str | None = None,
+        numbering_scheme: str | None = None,
     ) -> Any:
         """Run OCR while holding the engine's exclusive lifecycle lock."""
 
         if illumination is not None and illumination not in {"none", "he", "clahe"}:
             raise ValueError("Unknown OCR illumination mode")
+        if numbering_scheme is not None and numbering_scheme not in {"auto", "existing", "temp", "new"}:
+            raise ValueError("Unknown numbering scheme")
         with self._lock:
             engine = self._load_unlocked()
             try:
@@ -83,8 +86,9 @@ class TerminalOcrEngine:
                     engine,
                     image,
                     regions,
-                    replace(self.settings, illumination=illumination)
-                    if illumination is not None else self.settings,
+                    replace(self.settings,
+                            illumination=illumination if illumination is not None else self.settings.illumination,
+                            numbering_scheme=numbering_scheme if numbering_scheme is not None else self.settings.numbering_scheme),
                 )
             except OcrInferenceError:
                 raise
@@ -232,5 +236,5 @@ class TerminalOcrEngine:
             raise OcrInferenceError("Terminal OCR engine has no demo configuration")
         return run_pipeline(
             image, demo_regions, engine,
-            replace(config, illumination=settings.illumination),
+            replace(config, illumination=settings.illumination, numbering_scheme=settings.numbering_scheme),
         )

@@ -135,7 +135,7 @@ class TerminalWorkflowService:
         elif step == 5:
             rule = value['ordering'] or {}
             if rule.get('naming') == 'prefix' and not rule.get('prefix'): raise HTTPException(422, '请输入命名前缀')
-            if rule.get('naming') not in ('free', 'numeric', 'prefix'): raise HTTPException(422, '请配置命名规律')
+            if rule.get('naming') not in ('auto', 'existing', 'temp', 'new', 'free', 'numeric', 'prefix'): raise HTTPException(422, '请配置命名规律')
             from app.terminal_pair.numbering import validate_numbering
             try: validate_numbering(rule, len(self.ordered(value)))
             except ValueError as exc: raise HTTPException(422, str(exc)) from exc

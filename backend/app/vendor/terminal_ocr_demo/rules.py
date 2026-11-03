@@ -116,6 +116,9 @@ class TerminalCodeRules:
 
     @classmethod
     def from_config(cls, config: DemoConfig) -> "TerminalCodeRules":
+        if config.numbering_scheme is not None:
+            from .scheme_rules import TerminalCodeRules as SchemeRules
+            return SchemeRules.from_config(config)
         return cls.from_csv(
             config.code_library_path,
             base_pattern=config.base_code_pattern,

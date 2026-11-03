@@ -44,7 +44,7 @@ function chooseReplacement(event:Event) {
 }
 const titles = ['文字区域','左右方向','结构骨架','起始端子','编排及命名','文字识别']
 const editing = ref(1), selectedPoint = ref(''), tool = ref('select')
-const side = ref(props.taskSide || ''), start = ref(1), naming = ref('free'), prefix = ref('')
+const side = ref(props.taskSide || ''), start = ref(1), naming = ref(''), prefix = ref('')
 const numberPrefix=ref('')
 const numberingMode=ref<'numeric'|'alpha'>('numeric'), letterStart=ref('A'), letterCase=ref<'upper'|'lower'>('upper')
 const orderingDraft=computed(()=>({start:start.value,naming:naming.value,prefix:prefix.value,numbering_mode:numberingMode.value,letter_start:letterStart.value,letter_case:letterCase.value,number_prefix:numberPrefix.value}))
@@ -114,7 +114,7 @@ async function saveFile(value:File, regions:RegionDraft[]) {
     }
     flow.value=created;file.value=value;replacementFile.value=undefined
     selectedPoint.value='';pointHistory.value=[];tool.value='select';zoom.value=100
-    side.value=props.taskSide || '';start.value=1;naming.value='free';prefix.value=''
+    side.value=props.taskSide || '';start.value=1;naming.value='';prefix.value=''
     numberPrefix.value='';numberingMode.value='numeric';letterStart.value='A';letterCase.value='upper'
     if(imageUrl.value) URL.revokeObjectURL(imageUrl.value)
     imageUrl.value = URL.createObjectURL(value)
@@ -125,6 +125,7 @@ async function saveFile(value:File, regions:RegionDraft[]) {
   replacementFile.value=undefined
 }
 async function confirm() {
+  if(step.value===5 && !naming.value) { message.warning('请选择线号管命名规律'); return }
   await run(async()=>{
     if(step.value===2) await patch({side:side.value})
     if(step.value===5) await patch({ordering:orderingDraft.value})
@@ -159,7 +160,7 @@ if(props.terminalId || typeof route.query.workflow==='string') void run(async()=
   } else flow.value=(await apiClient.get(`/terminal-workflows/${route.query.workflow}`)).data.data
   editing.value=Math.min(6,flow.value!.confirmed+1)
   side.value=props.taskSide || flow.value!.side || ''
-  start.value=flow.value!.ordering?.start ?? 1; naming.value=flow.value!.ordering?.naming ?? 'free'; prefix.value=flow.value!.ordering?.prefix ?? ''
+  start.value=flow.value!.ordering?.start ?? 1; naming.value=['auto','existing','temp','new'].includes(flow.value!.ordering?.naming || '') ? flow.value!.ordering!.naming : 'auto'; prefix.value=flow.value!.ordering?.prefix ?? ''
   numberPrefix.value=flow.value!.ordering?.number_prefix ?? ''
   numberingMode.value=flow.value!.ordering?.numbering_mode ?? 'numeric'; letterStart.value=flow.value!.ordering?.letter_start ?? 'A'; letterCase.value=flow.value!.ordering?.letter_case ?? 'upper'
   // Authorized file content is loaded through the API, never a public storage URL.
@@ -223,7 +224,7 @@ onBeforeUnmount(()=>{disposed=true;if(imageUrl.value) URL.revokeObjectURL(imageU
             <template v-if="step===2"><label>本次识别方向<select v-model="side" :disabled="!!props.taskSide"><option value="">请选择方向</option><option value="left">左侧端子排</option><option value="right">右侧端子排</option></select></label><p class="field-note">请确认图片与顶部所选侧别一致。</p></template>
             <template v-if="step===3"><div class="stat-card"><strong>{{flow.points.length}}</strong><span>当前端子数量</span></div><p class="field-note">使用图片上方的工具栏校正骨架，再确认继续。</p><div v-if="selected" class="selection-card"><span class="selection-title">所选端子位置</span><div class="coordinates"><label>X 坐标<input v-model.number="pointX" type="number" min="0" :max="flow.width" /></label><label>Y 坐标<input v-model.number="pointY" type="number" min="0" :max="flow.height" /></label></div><a-button block :disabled="busy" @click="run(()=>updatePoints(flow!.points.map(p=>p.id===selectedPoint?{...p,x:pointX,y:pointY}:p)))">应用位置调整</a-button></div></template>
             <template v-if="step===4"><div class="status-message" :class="{ready:!!flow.start_point_id}">{{flow.start_point_id?'已设置起始端子，图片中以橙色标注':'尚未选择起始端子'}}</div><p class="field-note">起点之前的端子保留在骨架中，不参与本次编排。</p></template>
-            <template v-if="step===5"><div class="stat-card"><strong>{{ordered.length}}</strong><span>按从上到下顺序编排</span></div><label>端子孔编号方式<select v-model="numberingMode"><option value="numeric">数字顺序 · 1、2、3</option><option value="alpha">字母顺序 · A、B、C</option></select></label><label v-if="numberingMode==='numeric'">起始编号<input v-model.number="start" type="number" min="0" /></label><template v-else><label>起始字母<input v-model="letterStart" maxlength="10" placeholder="例如 A、Z、AA" /></label><label>字母大小写<select v-model="letterCase"><option value="upper">大写 · A、B、C</option><option value="lower">小写 · a、b、c</option></select></label></template><label>端子孔编号前缀（可选）<input v-model="numberPrefix" maxlength="40" placeholder="例如：XT-，留空则不加前缀" /></label><p class="numbering-preview">编号预览：{{numberingPreview || '请输入有效的起始编号'}}</p><p class="field-note">编号前缀只添加到端子孔编号，不修改线号管识别文字。</p><label>线号管命名规律<select v-model="naming"><option value="free">自由文本</option><option value="numeric">纯数字</option><option value="prefix">固定前缀</option></select></label><p class="field-note">线号管规律目前仅保存配置，不筛选或改写 OCR 结果。</p><label v-if="naming==='prefix'">线号管预期前缀<input v-model="prefix" placeholder="例如：XT-" /></label></template>
+            <template v-if="step===5"><div class="stat-card"><strong>{{ordered.length}}</strong><span>按从上到下顺序编排</span></div><label>端子孔编号方式<select v-model="numberingMode"><option value="numeric">数字顺序 · 1、2、3</option><option value="alpha">字母顺序 · A、B、C</option></select></label><label v-if="numberingMode==='numeric'">起始编号<input v-model.number="start" type="number" min="0" /></label><template v-else><label>起始字母<input v-model="letterStart" maxlength="10" placeholder="例如 A、Z、AA" /></label><label>字母大小写<select v-model="letterCase"><option value="upper">大写 · A、B、C</option><option value="lower">小写 · a、b、c</option></select></label></template><label>端子孔编号前缀（可选）<input v-model="numberPrefix" maxlength="40" placeholder="例如：XT-，留空则不加前缀" /></label><p class="numbering-preview">编号预览：{{numberingPreview || '请输入有效的起始编号'}}</p><p class="field-note">编号前缀只添加到端子孔编号，不修改线号管识别文字。</p><label>线号管命名规律<select v-model="naming"><option value="" disabled>请选择线号管命名规律</option><option value="auto">Auto · 自动匹配全部规则</option><option value="existing">现有柜</option><option value="temp">临时柜</option><option value="new">新柜</option></select></label><p class="field-note">OCR 将按所选规则校验线号；Auto 同时匹配现有柜、临时柜和新柜规则。未能可靠判定的结果保留供人工核对。</p></template>
             <template v-if="step===6"><div class="status-message ready"><CheckOutlined aria-hidden="true" /> 识别配置已确认</div><dl class="recognition-summary"><dt>识别方向</dt><dd>{{side==='left'?'左侧':'右侧'}}端子排</dd><dt>文字区域</dt><dd>{{flow.regions.length}} 个</dd><dt>编排端子</dt><dd>{{ordered.length}} 个</dd><dt>端子孔编号</dt><dd>{{numberingPreview}}</dd></dl><p class="field-note">识别后自动匹配端子点与文字，漏检孔位及匹配关系可在结果页继续校正。</p></template>
           </div>
           <div class="operation-actions"><a-button v-if="step<=5" type="primary" block size="large" :loading="busy" :disabled="!!flow.job_id" @click="confirm">{{confirmLabels[step-1]}} <ArrowRightOutlined aria-hidden="true" /></a-button><a-button v-else type="primary" block size="large" :loading="busy" :disabled="flow.confirmed<5 || !!flow.job_id" @click="submit"><ScanOutlined aria-hidden="true" /> 开始文字识别</a-button><span class="save-note">已确认配置会随流程保存</span></div>

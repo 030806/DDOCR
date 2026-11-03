@@ -207,6 +207,20 @@ def test_recognize_image_uses_full_image_roi_and_maps_page_result() -> None:
     assert result.roi_errors == {}
 
 
+def test_recognize_image_forwards_selected_numbering_scheme() -> None:
+    received: list[dict[str, object]] = []
+
+    class FakeManagedEngine:
+        def run(self, _image: Image.Image, _regions: object, **options: object) -> SimpleNamespace:
+            received.append(options)
+            return pipeline_result(detection())
+
+    adapter = OcrAdapter(FakeManagedEngine())  # type: ignore[arg-type]
+    adapter.recognize_image(Image.new("RGB", (200, 120)), options={"numbering_scheme": "temp", "illumination": "he"})
+    adapter.recognize_image(Image.new("RGB", (200, 120)))
+    assert received == [{"numbering_scheme": "temp", "illumination": "he"}, {}]
+
+
 def test_recognize_file_rejects_undecodable_image(tmp_path: Path) -> None:
     source = tmp_path / "broken.png"
     source.write_bytes(b"not an image")

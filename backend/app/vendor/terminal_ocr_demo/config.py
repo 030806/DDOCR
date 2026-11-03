@@ -19,6 +19,9 @@ class DemoConfig:
     min_roi_size: int = 8
     output_root: Path = PACKAGE_ROOT / "outputs" / "demo_runs"
     code_library_path: Path = RESOURCE_ROOT / "terminal_id_library.csv"
+    numbering_scheme: str | None = None
+    scheme_code_library_path: Path = RESOURCE_ROOT / "ferrule_known_codes.csv"
+    rule_family_path: Path = RESOURCE_ROOT / "ferrule_rule_families.json"
     base_code_pattern: str = r"^[HJXKUW]\d{1,3}(?:A[123]|B[123]|C|D)?$"
     extended_code_pattern: str = r"^[HJXKUW]\d{1,3}(?:A[123]|B[123]|C2|C|D|P)?$"
     cluster_iou_threshold: float = 0.35

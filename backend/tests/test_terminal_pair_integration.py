@@ -2,6 +2,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
+import pytest
 
 from app.main import create_app
 from app.terminal_pair.client import TerminalPairClient
@@ -29,6 +30,50 @@ def configured_client(tmp_path: Path, detector: FakeTerminalDetector) -> TestCli
         str(tmp_path), f"sqlite:///{(tmp_path / 'test.db').as_posix()}",
         FakeOcrAdapter(), terminal_detector=detector,
     ))
+
+
+@pytest.mark.parametrize("scheme", ["auto", "existing", "temp", "new"])
+def test_workflow_scheme_is_saved_on_ocr_job_and_inherited_by_rerun(tmp_path: Path, scheme: str) -> None:
+    client = configured_client(tmp_path, FakeTerminalDetector())
+    headers = register_headers(client)
+    file_id = upload_image(client, headers)
+    created = client.post("/api/v1/terminal-workflows", headers=headers, json={"file_id": file_id})
+    assert created.status_code == 200
+    flow = created.json()["data"]
+
+    def action(name: str, **body: object) -> dict:
+        nonlocal flow
+        response = client.post(
+            f"/api/v1/terminal-workflows/{flow['id']}/{name}", headers=headers,
+            json={"base_revision": flow["revision"], **body},
+        )
+        assert response.status_code == 200, response.text
+        flow = response.json()["data"]
+        return flow
+
+    action("configuration", changes={"regions": [{"id": "roi-1", "bbox": [100, 100, 700, 800]}]})
+    action("confirmations", step=1)
+    action("configuration", changes={"side": "left"})
+    action("confirmations", step=2)
+    action("skeleton-detections")
+    action("confirmations", step=3)
+    action("configuration", changes={"start_point_id": flow["points"][0]["id"]})
+    action("confirmations", step=4)
+    action("configuration", changes={"ordering": {"start": 1, "naming": scheme}})
+    action("confirmations", step=5)
+    result = action("recognitions")
+    job_id = result["id"]
+    wait_for_job(client, job_id, headers)
+    assert client.app.state.service.jobs.get(job_id)["options"]["numbering_scheme"] == scheme
+
+    rerun = client.post(
+        f"/api/v1/ocr/jobs/{job_id}/rerun", headers=headers,
+        json={"model_id": "mock", "model_version": "1.0.0"},
+    )
+    assert rerun.status_code == 202, rerun.text
+    rerun_id = rerun.json()["data"]["id"]
+    wait_for_job(client, rerun_id, headers)
+    assert client.app.state.service.jobs.get(rerun_id)["options"]["numbering_scheme"] == scheme
 
 
 def test_detection_and_manual_edit_are_saved_separately(tmp_path: Path) -> None:

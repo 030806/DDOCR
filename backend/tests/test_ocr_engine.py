@@ -143,6 +143,23 @@ def test_each_job_can_override_illumination_without_changing_the_shared_engine(t
         wrapper.run(Image.new("RGB", (20, 10)), [region()], illumination="unknown")
 
 
+def test_each_job_can_select_numbering_scheme_without_affecting_other_jobs(tmp_path: Path) -> None:
+    seen: list[str | None] = []
+    wrapper = TerminalOcrEngine(
+        settings(tmp_path),
+        engine_factory=lambda _settings: object(),
+        engine_runner=lambda _engine, _image, _regions, configured: seen.append(configured.numbering_scheme),
+    )
+    image = Image.new("RGB", (20, 10))
+    for scheme in ("existing", "temp", "new", "auto"):
+        wrapper.run(image, [region()], numbering_scheme=scheme)
+    wrapper.run(image, [region()])
+    assert seen == ["existing", "temp", "new", "auto", None]
+    assert wrapper.settings.numbering_scheme is None
+    with pytest.raises(ValueError, match="numbering scheme"):
+        wrapper.run(image, [region()], numbering_scheme="unknown")
+
+
 def test_load_initializes_once_without_running_inference(tmp_path: Path) -> None:
     factory_calls = 0
     runner_calls = 0
