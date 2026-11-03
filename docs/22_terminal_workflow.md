@@ -7,7 +7,7 @@
 3. 整图检测端子孔，按需添加、删除或移动孔位，再确认骨架。
 4. 点击起始端子。
 5. 确认从上到下的编排、起始编号和命名规律。
-6. 点击“识别”。在全部用户文字选区内执行文字 OCR，随后按原有逻辑自动匹配端子点和文字结果，在结果页面继续校正。
+6. 选择光照处理（原图 / 全局 HE / CLAHE），再点击“开始文字识别”。在全部用户文字选区内执行文字 OCR，随后按原有逻辑自动匹配端子点和文字结果，在结果页面继续校正。
 
 第五步确认后即可识别，不再生成文字位置预览，也不需要识别前逐孔确认对应关系。文字识别范围独立于端子孔数量；孔位漏检时，选区内文字依然全部识别，未匹配到孔位的文字保留在结果中供后续修正。最终任务复用已确认骨架，不重复运行 YOLOX。
 
@@ -93,3 +93,14 @@ UI 验证命令：node tests/workflow-ui/smoke.cjs。使用模拟数据验证上
 新增 POST /ocr/jobs/{job}/pages/{page}/terminal-document/sync，原接口保持兼容。新接口校验文档版本、OCR 文字版本、编号版本、页面归属和共用来源确认，事务内保存表格与来源。编辑、撤销、重做均可在一次请求中处理多个来源，失败保留整批输入，不部分提交。撤销使用原表格和来源快照，来源失效或版本冲突时要求重新核对。
 
 验证：tests/test_terminal_document_sync.py；src/businessSourceSync.test.ts；tests/business/smoke.cjs（自动同步、编号标签、无来源、共用来源两种选择、联合撤销、原来源纠正和剪贴板行为）。
+
+
+## 光照处理选项恢复（2026-11-03）
+
+向导第 6/6 步与普通工作台（识别模型旁）均可选择“原图 / 全局 HE / CLAHE”，分别对应 `none`、`he`、`clahe`。默认保持原图。原图不做光照增强；全局 HE 均衡整体亮度；CLAHE 增强局部对比度。
+
+向导通过已有 `configuration` 接口的 `changes.illumination` 保存选择，沿用 `base_revision` 校验，刷新或切换左右侧会恢复各自草稿的选择。修改光照不撤销前五步确认，也不重算骨架；保存失败保留服务器已保存的选择。旧草稿缺少该字段时按原图处理。最终识别任务的 `options.illumination` 和流程执行快照均保存本次模式。
+
+工作台的新文件整图识别、上传选区识别、历史任务重新识别、结果页区域识别均传递当前选择。打开历史任务时显示任务实际记录的模式。保存或识别执行期间禁用相关选择，已提交任务的参数不受后续选择影响。
+
+回归验证：`npm test`、`npm run build`；后端 `python -m pytest tests/test_workflow_illumination.py tests/test_ocr_illumination.py tests/test_ocr_engine.py tests/test_ocr_adapter.py tests/test_api.py`；浏览器 `node tests/illumination/smoke.cjs`（先启动 Vite，默认端口 15176）。

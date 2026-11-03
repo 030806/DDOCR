@@ -27,7 +27,7 @@ button { font: inherit; }
 .terminal-source { border: 0; background: transparent; padding: 0; color: #087b60; cursor: pointer; text-align: left; overflow-wrap: anywhere; }
 .terminal-merge-container { position: relative; display: flex; flex: 1; min-height: 0; }
 .terminal-loading { position: absolute; inset: 0; background: rgba(248,250,249,.94); display: flex; align-items: center; justify-content: center; gap: 14px; z-index: 5; }
-.terminal-shell .control-strip { height: 64px; flex-basis: 64px; padding-top: 0; padding-bottom: 0; }
+.terminal-shell .control-strip { min-height: 64px; padding-top: 10px; padding-bottom: 10px; }
 .terminal-shell .upload-icon { width: 34px; height: 34px; font-size: 17px; }
 .terminal-shell .run-btn { height: 36px; }
 .terminal-shell .result-list,.terminal-shell .result-table-scroll { overflow-y: scroll; scrollbar-gutter: stable; }
@@ -48,7 +48,7 @@ button { font: inherit; }
 .top-actions { width: auto; display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
 .top-actions button { border: 0; background: transparent; color: #afc0ba; padding: 8px 10px; cursor: pointer; }.top-actions button:hover,.top-actions button.active { color: white; }
 .top-actions .avatar { width: 31px; height: 31px; display: grid; place-items: center; padding: 0; border-radius: 6px; background: #2d715e; margin-left: 8px; color: #fff; font-size: 13px; }
-.control-strip { height: 82px; flex: 0 0 82px; background: #fff; border-bottom: 1px solid #d7ddda; display: flex; align-items: center; padding: 0 22px; gap: 26px; box-shadow: 0 2px 7px rgba(20,45,37,.04); z-index: 2; }
+.control-strip { min-height: 82px; flex: 0 0 auto; flex-wrap: wrap; background: #fff; border-bottom: 1px solid #d7ddda; display: flex; align-items: center; padding: 14px 22px; gap: 16px; box-shadow: 0 2px 7px rgba(20,45,37,.04); z-index: 2; }
 .upload-block { width: 350px; display: flex; align-items: center; gap: 12px; cursor: pointer; }
 .upload-icon { width: 39px; height: 39px; border-radius: 7px; display: grid; place-items: center; background: #e8f4ef; color: #168b6c; font-size: 19px; }
 .upload-block div { min-width: 0; flex: 1; }.upload-block b,.upload-block small { display: block; }.upload-block b { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }.upload-block small { color: #82908b; margin-top: 4px; font-size: 11px; }
@@ -66,7 +66,7 @@ button { font: inherit; }
 .upload-preview-info b,.upload-preview-info small { display: block; }.upload-preview-info b { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.upload-preview-info small { margin-top: 4px; color: #81908a; }
 .upload-preview-actions { display: flex; gap: 8px; }
 .control-divider { height: 38px; width: 1px; background: #dfe4e2; }
-.model-control { flex: 1; display: flex; align-items: center; gap: 12px; }.model-control label { color: #5c6965; font-size: 12px; font-weight: 600; }.model-note { color: #8b9793; font-size: 11px; }.model-note i { display: inline-block; width: 3px; height: 3px; background: #a5afac; border-radius: 50%; margin: 0 7px 3px; }
+.model-control { flex: 1 1 320px; display: flex; align-items: center; gap: 12px; }.model-control label { color: #5c6965; font-size: 12px; font-weight: 600; }.model-note { color: #8b9793; font-size: 11px; }.model-note i { display: inline-block; width: 3px; height: 3px; background: #a5afac; border-radius: 50%; margin: 0 7px 3px; }
 .run-btn { min-width: 142px; height: 42px; border: 0; border-radius: 7px; color: white; background: #168b6c; font-weight: 600; cursor: pointer; box-shadow: 0 5px 14px rgba(22,139,108,.2); }.run-btn:hover { background: #10785d; }.run-btn.running { background: #315d50; }
 .spinner { display: inline-block; width: 13px; height: 13px; margin-right: 7px; border: 2px solid rgba(255,255,255,.3); border-top-color: white; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; } @keyframes spin { to { transform: rotate(360deg); } }
 .workspace { flex: 1; min-height: 0; overflow: hidden; }

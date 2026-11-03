@@ -414,7 +414,7 @@ class MockOcrService:
         if active_rerun:
             raise HTTPException(409, "This OCR job is already being recognized again")
 
-        illumination = body.illumination or "he"
+        illumination = body.illumination or "none"
         previous_regions = self.region_jobs.context(source_job_id)
         if previous_regions:
             created = self.create_region_job(

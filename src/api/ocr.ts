@@ -406,7 +406,7 @@ export async function uploadAndCreateOcrTask(
   file: File,
   model: Pick<ModelOption, 'value' | 'version'>,
   onStage?: (stage: UploadProgressStage, progress: number) => void,
-  illumination: IlluminationMode = 'he',
+  illumination: IlluminationMode = 'none',
 ): Promise<string> {
   const uploaded = await uploadOcrFile(file, onStage)
 
@@ -429,7 +429,7 @@ export async function uploadAndCreateOcrTaskFromSelection(
   model: Pick<ModelOption, 'value' | 'version'>,
   regions: RegionDraft[],
   onStage?: (stage: UploadProgressStage, progress: number) => void,
-  illumination: IlluminationMode = 'he',
+  illumination: IlluminationMode = 'none',
 ): Promise<string> {
   if (!regions.length) return uploadAndCreateOcrTask(file, model, onStage, illumination)
   const uploaded = await uploadOcrFile(file, onStage)
@@ -447,7 +447,7 @@ export async function uploadAndCreateOcrTaskFromSelection(
 export async function rerunOcrTask(
   taskId: string,
   model: Pick<ModelOption, 'value' | 'version'>,
-  illumination: IlluminationMode = 'he',
+  illumination: IlluminationMode = 'none',
 ): Promise<string> {
   const response = await apiClient.post<ApiEnvelope<ApiCreatedJob>>(`/ocr/jobs/${taskId}/rerun`, {
     model_id: model.value,
@@ -508,7 +508,7 @@ export async function createRegionOcrTask(input: {
       page_no: 1,
       regions: input.regions.map(region => ({ client_id: region.clientId, bbox: region.bbox })),
     }],
-    illumination: input.illumination ?? 'he',
+    illumination: input.illumination ?? 'none',
   })
   return response.data.data.id
 }
