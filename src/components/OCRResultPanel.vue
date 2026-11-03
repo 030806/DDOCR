@@ -203,6 +203,7 @@ watch(() => props.page, () => { selectedIds.value = []; coordinateSorted.value =
             <span v-if="item.needsRawTextReview && !item.corrected" class="raw-text-review-tag">待核对原始标记</span>
           </p>
           <div class="result-meta">
+            <span v-if="item.terminalNumber" class="result-terminal-number">端子号 {{ item.terminalNumber }}</span>
             <span v-if="item.editSource === 'manual'" class="manual-result-tag">人工新增</span>
             <span v-else-if="showConfidence" :class="item.score < lowConfidenceThreshold ? 'low-score' : ''"><i :style="{ background: scoreColor(item.score) }"></i>{{ (item.score * 100).toFixed(1) }}%</span>
             <span v-if="item.corrected" class="corrected-tag">已纠正</span>

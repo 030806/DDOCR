@@ -3,6 +3,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { useRoute } from 'vue-router'
 import type { OcrPage, OcrItem } from '../types/ocr'
+import { planTableSync } from '../businessSourceSync'
+import { syncTerminalDocument, type SourceUpdate, type SyncedSource } from '../api/terminalDocument'
 import { loadTerminalDocument, saveTerminalDocument, type TerminalDocument, type TerminalRecord, type SourceChange } from '../api/terminalDocument'
 import { businessSelection } from '../businessSelection'
 import { selectedBusinessSourceIds } from '../businessDeletion'
@@ -23,9 +25,10 @@ const deletableRows = computed(() => doc.value.records.filter(row => row.sourceR
 const sourceOpen = ref(false), sourceTarget = ref<OcrItem>(), sourceRecordId = ref('')
 const syncSource = ref(true)
 const pendingHistory = ref<boolean>()
-const failedInput = ref<{ records: TerminalRecord[]; source?: SourceChange; syncId?: string }>()
+const failedInput = ref<{ records: TerminalRecord[]; source?: SourceChange; syncId?: string; sources?:SourceUpdate[] }>()
 let pendingReload = false
-type Operation = { before: TerminalRecord[]; after: TerminalRecord[]; sourceId?: string; beforeText?: string; afterText?: string; expectedSourceRevision?: number }
+type SyncHistory={before:SyncedSource[];after:SyncedSource[];expected:SyncedSource[]}
+type Operation = { sync?:SyncHistory; before: TerminalRecord[]; after: TerminalRecord[]; sourceId?: string; beforeText?: string; afterText?: string; expectedSourceRevision?: number }
 const undo = ref<Operation[]>([]), redo = ref<Operation[]>([])
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value))
 watch(() => [props.selectedTerminalId, props.selectedSourceId, doc.value.records.length], () => {
@@ -78,23 +81,43 @@ function finishBusy() {
 }
 onMounted(load)
 watch(() => JSON.stringify([props.page.items.map(i => [i.id, i.revision, i.geometryRevision, i.bbox, i.polygon, i.reviewStatus]), props.page.terminalPoints]), () => { if (!failedInput.value) void load() })
+function sourceState(id:string):SyncedSource {
+  const item=props.page.items.find(i=>i.id===id)!
+  return {result_id:id,text:item.corrected ?? item.text,revision:item.revision || 0,terminal_number:item.terminalNumber || '',table_revision:item.tableRevision || 0}
+}
+function reflectSynced(sources:SyncedSource[]) {
+  for(const saved of sources) {
+    const item=props.page.items.find(i=>i.id===saved.result_id)
+    if(item) {if((item.corrected ?? item.text)!==saved.text) item.corrected=saved.text;item.revision=saved.revision;item.terminalNumber=saved.terminal_number;item.tableRevision=saved.table_revision}
+    for(const op of [...undo.value,...redo.value]) {
+      if(op.sourceId===saved.result_id) op.expectedSourceRevision=saved.revision
+      const expected=op.sync?.expected.find(s=>s.result_id===saved.result_id)
+      if(expected) Object.assign(expected,saved)
+    }
+  }
+}
 function reflectSource(source?: SourceChange, revision?: number) {
   if (!source) return
   const item = props.page.items.find(i => i.id === source.result_id)
   if (item) { item.corrected = source.text; item.revision = revision }
-  for (const operation of [...undo.value, ...redo.value]) if (operation.sourceId === source.result_id) operation.expectedSourceRevision = revision
+  for (const operation of [...undo.value, ...redo.value]) {
+    if (operation.sourceId === source.result_id) operation.expectedSourceRevision = revision
+    const expected=operation.sync?.expected.find(s=>s.result_id===source.result_id)
+    if(expected) expected.revision=revision || 0
+  }
 }
-async function commit(records: TerminalRecord[], source?: SourceChange, syncId?: string) {
+async function commit(records: TerminalRecord[], source?: SourceChange, syncId?: string, sources?:SourceUpdate[]) {
   busy.value = true
   try {
-    const saved = await saveTerminalDocument(job, pageNo, { revision: doc.value.revision, records }, source, syncId)
+    const saved = sources?.length ? await syncTerminalDocument(job,pageNo,{revision:doc.value.revision,records},sources) : await saveTerminalDocument(job, pageNo, { revision: doc.value.revision, records }, source, syncId)
     doc.value = saved
     failed.value = false
     failedInput.value = undefined
-    reflectSource(source, saved.correction?.revision)
+    reflectSource(source, 'correction' in saved ? saved.correction?.revision : undefined)
+    if('sources' in saved) reflectSynced(saved.sources)
     emit('changed')
     return true
-  } catch { failed.value = true; failedInput.value = { records: clone(records), source, syncId }; message.error('保存失败或版本冲突，整批输入已保留；可重试或重新加载核对') ; return false }
+  } catch { failed.value = true; failedInput.value = { records: clone(records), source, syncId, sources }; message.error('保存失败或版本冲突，整批输入已保留；可重试或重新加载核对') ; return false }
   finally { finishBusy() }
 }
 async function change(changes: GridChange[]) {
@@ -107,8 +130,25 @@ async function change(changes: GridChange[]) {
       Object.assign(row, { [c.field]: normalizeGridValue(c.field, c.value), manual: true })
       if (c.field === 'cable' && c.clearSource) Object.assign(row, { sourceResultId: null, sourceRevision: 0, manualConfirmed: false })
     }
-    if (await commit(after)) { undo.value.push({ before, after: clone(doc.value.records) }); redo.value = [] }
-  } catch (error) { message.error(String(error)) }
+    const plan=planTableSync(before,after,props.page.items)
+    let updates=plan.updates
+    if(plan.shared.size) {
+      busy.value=true
+      const synchronize=await new Promise<boolean>(resolve=>Modal.confirm({
+        title:'该 OCR 来源被多行共用',content:'同时修改来源会更新共用来源行的对应字段。也可以只保存本次表格修改。',
+        okText:'同时修改来源',cancelText:'只改表格',closable:false,maskClosable:false,
+        onOk:()=>{resolve(true)},onCancel:()=>{resolve(false)},
+      }))
+      busy.value=false
+      updates=synchronize ? updates.map(u=>({...u,allow_shared:plan.shared.has(u.result_id)})) : updates.filter(u=>!plan.shared.has(u.result_id))
+    }
+    const sourceBefore=updates.map(u=>sourceState(u.result_id))
+    if (await commit(after,undefined,undefined,updates)) {
+      const sourceAfter=updates.map(u=>sourceState(u.result_id))
+      undo.value.push({ before, after: clone(doc.value.records),sync:updates.length ? {before:sourceBefore,after:sourceAfter,expected:clone(sourceAfter)} : undefined }); redo.value = []
+      if(plan.skipped) message.info(`${plan.skipped} 行无有效关联来源，仅保存表格修改`)
+    }
+  } catch (error) { doc.value=clone(doc.value);message.error(String(error)) }
 }
 function clipboardSource(id: string): BusinessClipboard['rows'][number] {
   const r = doc.value.records.find(r => r.id === id)!
@@ -156,6 +196,16 @@ async function history(forward = false) {
   const stack = forward ? redo.value : undo.value
   const op = stack[stack.length - 1]
   if (!op) return
+  if(op.sync) {
+    if(op.sync.expected.some(s=>!props.page.items.some(i=>i.id===s.result_id && i.reviewStatus!=='deleted' && i.reviewStatus!=='false_positive'))) {message.warning('来源已失效，不能直接撤销，请重新加载核对');return}
+    const current=op.sync.expected.map(s=>sourceState(s.result_id))
+    if(current.some((s,i)=>s.revision!==op.sync!.expected[i]!.revision || s.table_revision!==op.sync!.expected[i]!.table_revision)) {message.warning('OCR 来源已被其他操作修改，请重新加载核对');return}
+    const targets=forward?op.sync.after:op.sync.before
+    const updates=targets.map((s,i)=>({result_id:s.result_id,base_revision:current[i]!.revision,base_table_revision:current[i]!.table_revision,...(op.sync!.before[i]!.text!==op.sync!.after[i]!.text?{text:s.text}:{}),...(op.sync!.before[i]!.terminal_number!==op.sync!.after[i]!.terminal_number?{terminal_number:s.terminal_number}:{}),allow_shared:true,propagate:false}))
+    pendingHistory.value=forward
+    if(await commit(clone(forward?op.after:op.before),undefined,undefined,updates)) {pendingHistory.value=undefined;stack.pop();(forward?undo.value:redo.value).push(op)}
+    return
+  }
   const item = props.page.items.find(i => i.id === op.sourceId)
   if (op.sourceId && item?.revision !== op.expectedSourceRevision) { message.warning('来源文字已被其他操作修改，不能直接撤销，请核对当前值'); return }
   const source = op.sourceId && item ? { result_id: op.sourceId, base_revision: item.revision || 0, text: (forward ? op.afterText : op.beforeText)! } : undefined
@@ -179,9 +229,10 @@ async function retry() {
   if (!input || busy.value) return
   const before = clone(doc.value.records)
   const sourceItem = props.page.items.find(i => i.id === input.source?.result_id)
+  const syncedBefore=input.sources?.map(u=>sourceState(u.result_id))
   const beforeText = sourceItem ? sourceItem.corrected ?? sourceItem.text : undefined
-  if (await commit(input.records, input.source, input.syncId)) {
-    undo.value.push({ before, after: clone(doc.value.records), sourceId: input.source?.result_id, beforeText, afterText: input.source?.text, expectedSourceRevision: sourceItem?.revision })
+  if (await commit(input.records, input.source, input.syncId,input.sources)) {
+    undo.value.push({ before, after: clone(doc.value.records),sync:syncedBefore?.length ? {before:syncedBefore,after:input.sources!.map(u=>sourceState(u.result_id)),expected:input.sources!.map(u=>sourceState(u.result_id))}:undefined, sourceId: input.source?.result_id, beforeText, afterText: input.source?.text, expectedSourceRevision: sourceItem?.revision })
     redo.value = []; sourceOpen.value = false
   }
 }
@@ -192,7 +243,7 @@ defineExpose({ pending: () => busy.value || !loaded.value || failed.value, flush
 </script>
 <template>
   <div class="business-grid">
-    <p class="business-hint">端子最终结果：编辑、粘贴和清空不修改 OCR 列表。包含全部有效识别编号；未匹配端子点的编号点击后定位识别框。</p>
+    <p class="business-hint">端子最终结果：编辑端子号或线缆编号会同步关联 OCR 列表；无来源仅改表格，共用来源先确认。粘贴和移动来源保持原有规则。</p>
     <div v-if="failed"><button v-if="failedInput" @click="retry">重试保留的整批输入</button><button @click="async () => { await load(); if (!failed) failedInput = undefined }">重新加载（放弃保留输入）</button><details v-if="failedInput"><summary>查看保留的输入</summary><pre>{{ failedInput.records }}</pre></details></div>
     <OcrResultGrid v-if="loaded" :rows="rows" :clipboard-scope="`${job}:${pageNo}`" :clipboard-source="clipboardSource" @transfer="transfer" :source-reason="sourceReason" :selected-id="active" :selected-ids="selected" :deletable-ids="deletableRows" :values="values" :statuses="{}" :revision="doc.revision" :can-undo="!!undo.length && !busy" :can-redo="!!redo.length && !busy" :editing-disabled="busy || failed || editingDisabled" @change="change" @select="select" @selection="selected = $event" @undo="history()" @redo="history(true)" @correct-source="correctSource" @delete-selected="deleteSelectedSources" />
     <p v-if="busy" role="status">正在加载或保存整批操作…</p>

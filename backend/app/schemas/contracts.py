@@ -168,3 +168,18 @@ class TerminalDocumentSave(BaseModel):
     records: list[dict[str, Any]] = Field(max_length=5000)
     source: TerminalSourceCorrection | None = None
     sync_record_id: str | None = None
+
+class TerminalSourceUpdate(BaseModel):
+    result_id: str
+    base_revision: int = Field(ge=0)
+    base_table_revision: int = Field(ge=0)
+    text: str | None = Field(default=None, max_length=500)
+    terminal_number: str | None = Field(default=None, max_length=500)
+    allow_shared: bool = False
+    propagate: bool = True
+
+
+class TerminalDocumentSync(BaseModel):
+    base_revision: int = Field(ge=0)
+    records: list[dict[str, Any]] = Field(max_length=5000)
+    sources: list[TerminalSourceUpdate] = Field(max_length=5000)

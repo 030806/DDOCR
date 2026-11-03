@@ -8,3 +8,8 @@ export async function loadTerminalDocument(job: string, page: number): Promise<T
 export async function saveTerminalDocument(job: string, page: number, document: TerminalDocument, source?: SourceChange, syncRecordId?: string) {
   return (await apiClient.put(`/ocr/jobs/${job}/pages/${page}/terminal-document`, { base_revision: document.revision, records: document.records, source, sync_record_id: syncRecordId })).data.data as TerminalDocument & { correction?: { corrected_text: string; revision: number } }
 }
+export type SyncedSource = {result_id:string;text:string;revision:number;terminal_number:string;table_revision:number}
+export type SourceUpdate = {result_id:string;base_revision:number;base_table_revision:number;text?:string;terminal_number?:string;allow_shared?:boolean;propagate?:boolean}
+export async function syncTerminalDocument(job:string,page:number,document:TerminalDocument,sources:SourceUpdate[]) {
+  return (await apiClient.post(`/ocr/jobs/${job}/pages/${page}/terminal-document/sync`,{base_revision:document.revision,records:document.records,sources})).data.data as TerminalDocument & {sources:SyncedSource[]}
+}

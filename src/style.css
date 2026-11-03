@@ -208,3 +208,5 @@ button { font: inherit; }
 .zoom-control button { flex: 0 0 auto; white-space: nowrap; padding: 0 8px; }
 .zoom-buttons { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
 .document-name { flex: 0 0 auto; padding: 6px 12px; border-bottom: 1px solid #ccd5d1; background: #f8faf9; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.result-terminal-number { padding: 2px 6px; border-radius: 4px; background: #edf6f1; color: #287452; font-size: 11px; }

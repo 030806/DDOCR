@@ -584,7 +584,7 @@ def ensure_terminal_record(job_id: str, page_no: int, point_id: str, request: Re
     return envelope(service(request).ensure_terminal_record(job_id, page_no, point_id, actor["id"]))
 
 
-from app.schemas.contracts import TerminalDocumentSave
+from app.schemas.contracts import TerminalDocumentSave, TerminalDocumentSync
 from app.services.terminal_document import TerminalDocumentService
 
 @router.get("/ocr/jobs/{job_id}/pages/{page_no}/terminal-document")
@@ -598,3 +598,10 @@ def save_terminal_document(job_id: str, page_no: int, body: TerminalDocumentSave
                            authorization: Annotated[str | None, Header()] = None):
     actor = authenticated_user(request, authorization)
     return envelope(TerminalDocumentService(service(request)).save(job_id, page_no, body, actor["id"]))
+
+@router.post("/ocr/jobs/{job_id}/pages/{page_no}/terminal-document/sync")
+def sync_terminal_document(job_id: str, page_no: int, body: "TerminalDocumentSync", request: Request,
+                           authorization: Annotated[str | None, Header()] = None):
+    actor = authenticated_user(request, authorization)
+    return envelope(TerminalDocumentService(service(request)).save(
+        job_id, page_no, TerminalDocumentSave(base_revision=body.base_revision, records=body.records), actor['id'], body.sources))

@@ -103,9 +103,10 @@ class TerminalDocumentService:
                 revision += 1
         return {"revision": revision, "records": records}
 
-    def save(self, job_id, page_no, body, owner):
+    def save(self, job_id, page_no, body, owner, source_updates=()):
         page = self.context(job_id, page_no, owner)
         before = self.get(job_id, page_no, owner)
+        synced = []
         with Session(self.engine) as db, db.begin():
             # Serialize both business and OCR changes on the job lock.
             db.execute(update(ocr_jobs).where(ocr_jobs.c.id == job_id).values(result_version=ocr_jobs.c.result_version + 1))
@@ -160,11 +161,51 @@ class TerminalDocumentService:
                             if body.sync_record_id == record["id"]:
                                 record["manualConfirmed"] = False
                                 record["manual"] = True
+            if len({u.result_id for u in source_updates}) != len(source_updates):
+                raise HTTPException(422, 'Duplicate OCR source update')
+            for source in source_updates:
+                linked = [r for r in records if r.get('sourceResultId') == source.result_id]
+                old_linked = [r for r in allowed.values() if r.get('sourceResultId') == source.result_id]
+                if not linked or {r['id'] for r in linked} != {r['id'] for r in old_linked}:
+                    raise HTTPException(422, 'Cannot change source associations during synchronization')
+                if len(linked) > 1 and not source.allow_shared:
+                    raise HTTPException(409, '该 OCR 来源被多行共用，请确认影响范围')
+                row = db.execute(select(results).where(results.c.id == source.result_id, results.c.page_id == page['id'])).mappings().first()
+                if not row or row['review_status'] in ('deleted','false_positive'):
+                    raise HTTPException(422, 'OCR source unavailable')
+                if row['current_revision'] != source.base_revision or row['table_revision'] != source.base_table_revision:
+                    raise HTTPException(409, 'OCR 来源已变化，请重新加载核对')
+                changes = {}
+                revision, table_revision = row['current_revision'], row['table_revision']
+                text = row['current_correction']['corrected_text'] if row['current_correction'] else row['text']
+                if source.text is not None and source.text != text:
+                    revision += 1
+                    stamp = datetime.now(UTC)
+                    correction = {'id':str(uuid4()), 'result_id':row['id'], 'corrected_text':source.text,
+                                  'revision':revision, 'created_by':{'id':owner,'name':db.scalar(select(users.c.name).where(users.c.id==owner)) or ''},'created_at':stamp.isoformat()}
+                    db.execute(insert(corrections).values(id=correction['id'],result_id=row['id'],corrected_text=source.text,
+                        revision=revision,base_revision=row['current_revision'],user_id=owner,created_at=stamp))
+                    changes.update(current_revision=revision,current_correction=correction)
+                    text = source.text
+                number = row['terminal_number']
+                if source.terminal_number is not None and source.terminal_number != number:
+                    table_revision += 1
+                    number = source.terminal_number
+                    changes.update(terminal_number=number,table_revision=table_revision)
+                if changes: db.execute(update(results).where(results.c.id==row['id']).values(**changes))
+                for record in linked:
+                    if source.text is not None:
+                        if source.propagate: record['cable']=text
+                        record['sourceRevision']=revision
+                    if source.terminal_number is not None and source.propagate: record['terminalNumber']=number
+                    # An explicit undo snapshot must keep its values and source binding.
+                    record['manual']=True
+                synced.append({'result_id':row['id'],'text':text,'revision':revision,'terminal_number':number,'table_revision':table_revision})
             updated = db.execute(update(terminal_documents).where(terminal_documents.c.page_id == page["id"],
                                  terminal_documents.c.revision == body.base_revision).values(records=records, revision=body.base_revision + 1))
             if not updated.rowcount:
                 raise HTTPException(409, "Terminal records changed")
-        return {**self.get(job_id, page_no, owner), "correction": correction, "before": before}
+        return {**self.get(job_id, page_no, owner), "correction": correction, "before": before, **({"sources": synced} if source_updates else {})}
 
 
 def effective_records(db, page):
