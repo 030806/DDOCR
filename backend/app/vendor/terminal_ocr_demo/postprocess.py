@@ -127,6 +127,7 @@ def _make_clusters(
 _MATCH_PRIORITY = {
     "exact_library": 4,
     "base_regex": 3,
+    "scheme_regex": 3,
     "extended_regex": 2,
     "one_character_correction": 1,
     "model_probability_correction": 1,
@@ -159,7 +160,7 @@ def _assessed(
             if len(changed) != 1 or raw[changed[0]] in ALLOWED_CHARACTERS:
                 continue
             replacement = rules.assess(text)
-            if replacement.match_method not in {"exact_library", "base_regex", "extended_regex"}:
+            if replacement.match_method not in {"exact_library", "base_regex", "extended_regex", "scheme_regex"}:
                 continue
             assessment = replace(
                 replacement,

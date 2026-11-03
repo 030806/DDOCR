@@ -157,10 +157,12 @@ class OcrAdapter:
         )
         started = perf_counter()
         illumination = (options or {}).get("illumination")
-        demo_result = (
-            self._engine.run(image, active_regions, illumination=illumination)
-            if illumination is not None else self._engine.run(image, active_regions)
-        )
+        overrides = {}
+        if illumination is not None:
+            overrides["illumination"] = illumination
+        if (options or {}).get("numbering_scheme") is not None:
+            overrides["numbering_scheme"] = options["numbering_scheme"]
+        demo_result = self._engine.run(image, active_regions, **overrides)
         processing_ms = max(0, round((perf_counter() - started) * 1000))
         return self.adapt_page_result(
             demo_result,

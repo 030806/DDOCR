@@ -23,6 +23,13 @@ class CodeAssessment:
     match_method: str
     edit_count: int | None
     review_status: str
+    requested_scheme: str = "auto"
+    matched_scheme: str | None = None
+    matched_rule_id: str | None = None
+    rule_level: str | None = None
+    review_reason: str | None = None
+    normalization_actions: tuple[str, ...] = ()
+    rule_confidence: float = 0.0
 
 
 @dataclass(frozen=True)

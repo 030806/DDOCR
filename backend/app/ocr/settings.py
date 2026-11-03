@@ -59,6 +59,7 @@ class OcrSettings:
     rotations: tuple[int, ...]
     max_concurrency: int
     execution_mode: str
+    numbering_scheme: str | None = None
     backend: str = "onnx"
     illumination: str = "he"
     ctc_min_relative_probability: float = 0.5

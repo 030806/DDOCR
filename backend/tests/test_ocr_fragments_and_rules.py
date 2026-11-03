@@ -98,3 +98,28 @@ def test_all_invalid_characters_leave_one_review_marker(tmp_path):
     assert assessment.output_text == "#"
     assert assessment.review_status == "unresolved"
 
+
+def test_workflow_numbering_schemes_use_their_own_library_and_patterns():
+    cases = {
+        "T6-4": {"auto", "temp"},
+        "CA70": {"auto", "new"},
+    }
+    for text, matching_schemes in cases.items():
+        for scheme in ("auto", "existing", "temp", "new"):
+            active = TerminalCodeRules.from_config(replace(DemoConfig(), numbering_scheme=scheme))
+            assessment = active.assess(text)
+            if scheme in matching_schemes:
+                assert assessment.match_method in {"exact_library", "scheme_regex"}
+                assert assessment.output_text == text
+            else:
+                assert assessment.review_status == "unresolved"
+            assert assessment.requested_scheme == scheme
+
+
+def test_workflow_scheme_keeps_invalid_character_review_behavior():
+    active = TerminalCodeRules.from_config(replace(DemoConfig(), numbering_scheme="existing"))
+    assessment = active.assess("K2（C")
+    assert assessment.output_text == "K2C"
+    assert assessment.review_status == "unresolved"
+    assert assessment.requested_scheme == "existing"
+

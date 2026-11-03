@@ -522,6 +522,14 @@ class MockOcrService:
         job_id = uid()
         page_id = uid()
         created_at = now()
+        source_for_options = source_job or (
+            self.job(rerun_source_job_id, owner_id) if rerun_source_job_id else None
+        )
+        if workflow_snapshot:
+            selected_scheme = workflow_snapshot["ordering"]["naming"]
+            numbering_scheme = selected_scheme if selected_scheme in {"auto", "existing", "temp", "new"} else "auto"
+        else:
+            numbering_scheme = (source_for_options or {}).get("options", {}).get("numbering_scheme")
         job = {
             "id": job_id, "owner_id": owner_id, "name": body.name,
             "file_id": file_id, "file_name": uploaded_file["file_name"],
@@ -531,6 +539,7 @@ class MockOcrService:
             "page_ids": [page_id], "page_count": 1, "completed_pages": 0,
             "failed_pages": 0, "result_count": 0, "review_count": 0,
             "options": {
+                **({"numbering_scheme": numbering_scheme} if numbering_scheme in {"auto", "existing", "temp", "new"} else {}),
                 "recognition_scope": "regions",
                 "illumination": body.illumination,
                 **({"rerun_source_job_id": rerun_source_job_id} if rerun_source_job_id else {}),
