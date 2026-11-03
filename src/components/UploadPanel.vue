@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { CheckCircleFilled, CloudUploadOutlined, EyeOutlined, SearchOutlined } from '@ant-design/icons-vue'
 import { ref } from 'vue'
-import type { ModelOption } from '../types/ocr'
+import IlluminationSelect from './IlluminationSelect.vue'
+import type { IlluminationMode, ModelOption } from '../types/ocr'
 
 defineProps<{
   models: ModelOption[]
   selectedModel: string
+  illumination: IlluminationMode
+  illuminationDisabled?: boolean
   currentModel?: ModelOption
   jobState: 'ready' | 'running' | 'done'
   progress: number
@@ -17,6 +20,7 @@ defineProps<{
 
 const emit = defineEmits<{
   'update:selectedModel': [value: string]
+  'update:illumination': [value: IlluminationMode]
   upload: [file: File]
   preview: []
   run: []
@@ -57,6 +61,7 @@ function handleFileChange(event: Event) {
         @update:value="emit('update:selectedModel', $event)"
       />
     </div>
+    <IlluminationSelect :model-value="illumination" :disabled="jobState === 'running' || illuminationDisabled" compact @update:model-value="emit('update:illumination', $event)" />
     <button class="run-btn" :class="{ running: jobState === 'running' }" :disabled="!currentModel" @click="emit('run')">
       <span v-if="jobState === 'running'" class="spinner"></span>
       <CheckCircleFilled v-else-if="jobState === 'done'" />
