@@ -255,12 +255,18 @@ function textEditor(cell: CellComponent, onRendered: (cb: () => void) => void, s
   input.addEventListener('compositionstart', () => { composing = true })
   input.addEventListener('compositionend', () => { composing = false })
   input.addEventListener('blur', commit)
+  // Keep native caret positioning and word selection inside the editor.
+  // Tabulator's cell/range mouse handlers must not retake focus here.
+  for (const event of ['pointerdown', 'mousedown', 'click', 'dblclick']) {
+    input.addEventListener(event, event => event.stopPropagation())
+  }
   input.addEventListener('keydown', event => {
+    event.stopPropagation()
     if (composing || event.isComposing) return
     if (event.key === 'Escape') { completed = true; cancel(undefined); event.stopPropagation() }
     if (event.key === 'Tab' || event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); commit(); navigate(cell, event.key, event.shiftKey) }
   })
-  onRendered(() => { input.focus(); input.select() })
+  onRendered(() => { input.focus({ preventScroll: true }); input.setSelectionRange(input.value.length, input.value.length) })
   return input
 }
 function refresh() {
@@ -373,7 +379,7 @@ onBeforeUnmount(() => { built = false; host.value?.removeEventListener('paste', 
     </div>
     <details class="ocr-grid-help">
       <summary>操作帮助</summary>
-      <p>双击编辑；Tab 左右、Enter 上下；拖选区域后 Ctrl+C/V；Ctrl+D 向下填充。</p>
+      <p>双击编辑，点击文字定位光标；编辑中可用方向键移动、Ctrl+A 全选；Tab 左右、Enter 上下；拖选区域后 Ctrl+C/V；Ctrl+D 向下填充。</p>
       <p v-if="clipboardScope">选择线缆编号单列后 Ctrl+X 剪切，Ctrl+V 粘贴；编号和识别来源一起移动，粘贴成功才清空源位置。Ctrl+C 复制及向下填充也携带来源。端子号和端子点不移动。</p>
       <p>选择列从未勾选行拖选可勾选，从已勾选行拖选可取消，支持 Shift 连选。</p>
       <p>人工确认列支持纵向拖选：从未确认行开始批量确认，从已确认行开始批量取消；只读行跳过，整批操作可撤销。</p>
