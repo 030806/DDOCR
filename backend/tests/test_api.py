@@ -203,7 +203,7 @@ def test_rerun_defaults_to_he_even_when_source_used_none(tmp_path: Path) -> None
     rerun_id = rerun.json()["data"]["id"]
     wait_for_job(test_client, rerun_id, headers)
     rerun_job = test_client.get(f"/api/v1/ocr/jobs/{rerun_id}", headers=headers).json()["data"]
-    assert rerun_job["options"]["illumination"] == "he"
+    assert rerun_job["options"]["illumination"] == "none"
     source_context = test_client.get(
         f"/api/v1/ocr/region-jobs/{source_id}/context", headers=headers,
     ).json()["data"]

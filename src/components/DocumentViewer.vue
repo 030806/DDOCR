@@ -20,6 +20,7 @@ defineProps<{
   terminalEditMode?: boolean
   terminalDirty?: boolean
   terminalSaving?: boolean
+  allowRegionJob?: boolean
   selectedTerminalId?: string
 }>()
 
@@ -77,7 +78,7 @@ const emit = defineEmits<{
         <button :disabled="currentPage === pages.length" @click="emit('pageChange', currentPage + 1)"><RightOutlined /></button>
       </div>
       <div class="zoom-control">
-        <button v-if="jobState === 'done'" :disabled="editMode || terminalEditMode" @click="emit('createRegionJob')"><AimOutlined /> 区域识别</button>
+        <button v-if="jobState === 'done' && allowRegionJob !== false" :disabled="editMode || terminalEditMode" @click="emit('createRegionJob')"><AimOutlined /> 区域识别</button>
         <button :disabled="terminalEditMode" :class="{ active: editMode }" @click="emit('editToggle')"><EditOutlined /> {{ editMode ? '退出编辑' : '编辑框' }}</button>
         <button v-if="page.terminalPoints" :disabled="editMode || terminalSaving" :class="{ active: terminalEditMode }" @click="emit('terminalToggle')"><EditOutlined /> {{ terminalEditMode ? '退出端子编辑' : '编辑端子点' }}</button>
         <div class="zoom-buttons">

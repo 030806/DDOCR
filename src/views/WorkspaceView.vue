@@ -6,11 +6,13 @@ import { isAxiosError } from 'axios'
 import { Pane, Splitpanes } from 'splitpanes'
 import 'splitpanes/dist/splitpanes.css'
 import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter, type NavigationGuardNext } from 'vue-router'
-import type { ModelOption, OcrItem, OcrPage, OcrPolygon, OcrReviewStatus, TerminalPoint } from '../types/ocr'
+import type { IlluminationMode, ModelOption, OcrItem, OcrPage, OcrPolygon, OcrReviewStatus, TerminalPoint } from '../types/ocr'
 import { createComment, createCorrection, createRegionOcrTask, deleteComment, getModels, getOcrPages, releasePageImages, rerunOcrTask, saveResultEdits, saveTerminalPoints, updateComment, updateResultReviewStatus, updateResultTable, uploadAndCreateOcrTaskFromSelection, type RegionDraft } from '../api/ocr'
 import { createSplitLayout } from '../splitLayout'
 import { completeDatasetReview, getDatasetStatuses, type DatasetStatus } from '../api/dataset'
 import { exportTerminalBusiness, exportOcrResults, type ExportMode } from '../exportResults'
+import { apiClient } from '../api/client'
+import TerminalResultControls from '../components/TerminalResultControls.vue'
 import UploadPanel from '../components/UploadPanel.vue'
 import DocumentViewer from '../components/DocumentViewer.vue'
 import OCRResultPanel from '../components/OCRResultPanel.vue'
@@ -37,6 +39,9 @@ type JobState = 'ready' | 'running' | 'done'
 
 const route = useRoute()
 const router = useRouter()
+const isTerminalTask = computed(()=>typeof route.params.terminalId==='string')
+const terminalRerunning=ref(false)
+const terminalResultBusy=computed(()=>terminalRerunning.value || jobState.value==='running' || taskLoading.value)
 const terminalPositionKey = route.params.terminalId ? `${route.params.terminalId}:${route.params.side}:${route.params.taskId || ''}` : ''
 const { settings } = useAppSettings()
 const { user } = useAuth()
@@ -44,6 +49,7 @@ const initialContent = createEmptyWorkspaceContent()
 const currentPage = ref(initialContent.currentPage)
 const selectedId = ref(initialContent.selectedId)
 const selectedModel = ref('')
+const illumination = ref<IlluminationMode>('none')
 const availableModels = ref<ModelOption[]>([])
 const zoom = ref(settings.value.defaultZoom)
 const jobState = ref<JobState>('ready')
@@ -222,6 +228,7 @@ function ensureTaskModel(task: NonNullable<typeof polledTask.value>): void {
     availableModels.value.push({ value: task.modelId, version: task.modelVersion || '', label: task.modelName, note: '', speed: '' })
   }
   selectedModel.value = task.modelId
+  illumination.value = task.illumination ?? 'none'
 }
 
 async function loadCompletedTask(task: NonNullable<typeof polledTask.value>, sequence: number): Promise<void> {
@@ -244,7 +251,7 @@ async function loadCompletedTask(task: NonNullable<typeof polledTask.value>, seq
     progress.value = 100
     emit('completed', task.id, taskPages.length)
     message.success(task.jobStatus === 'partial_success' ? `任务部分完成：${task.name}` : `识别完成：${task.name}`)
-    if (route.query.action === 'region' && autoRegionTaskId !== task.id) {
+    if (!isTerminalTask.value && route.query.action === 'region' && autoRegionTaskId !== task.id) {
       autoRegionTaskId = task.id
       regionJobOpen.value = true
     }
@@ -660,7 +667,18 @@ async function navigateCreatedTask(taskId: string) {
   } else await router.push(`/workspace/${taskId}`)
 }
 
+async function runTerminalRerun() {
+  if(!isTerminalTask.value || terminalResultBusy.value || !await prepareSideChange()) return
+  terminalRerunning.value=true
+  try {
+    const result=(await apiClient.post(`/terminal-tasks/${route.params.terminalId}/sides/${route.params.side}/enhancement-reruns`,{source_job_id:route.params.taskId,illumination:illumination.value})).data.data
+    await router.push(terminalSidePath(String(route.params.terminalId),route.params.side==='right'?'right':'left',result.id))
+  } catch(error) {message.error(isAxiosError(error)?error.response?.data?.error?.message || '重新识别失败，请重试':'重新识别失败，请重试')}
+  finally {terminalRerunning.value=false}
+}
 async function runOcr() {
+  if(isTerminalTask.value) {await runTerminalRerun();return}
+
   if (jobState.value === 'running') return
   const sourceTaskId = route.params.taskId
   if (!selectedFile.value && jobState.value === 'done' && typeof sourceTaskId === 'string') {
@@ -671,7 +689,7 @@ async function runOcr() {
     jobState.value = 'running'
     progress.value = 5
     try {
-      const taskId = await rerunOcrTask(sourceTaskId, currentModel.value)
+      const taskId = await rerunOcrTask(sourceTaskId, currentModel.value, illumination.value)
       message.success(`已使用原文件重新识别 · ${currentModel.value.label}`)
       await navigateCreatedTask(taskId)
     } catch (error) {
@@ -695,7 +713,7 @@ async function runOcr() {
   jobState.value = 'running'
   progress.value = 5
   try {
-    const taskId = await uploadAndCreateOcrTaskFromSelection(file, model, regions, (_stage, value) => { progress.value = value })
+    const taskId = await uploadAndCreateOcrTaskFromSelection(file, model, regions, (_stage, value) => { progress.value = value }, illumination.value)
     progress.value = 0
     jobState.value = 'running'
     message.success(`${regions.length ? '区域识别' : '整图识别'}任务已提交 · ${model.label}`)
@@ -708,19 +726,21 @@ async function runOcr() {
 }
 
 function openSourceRegionJob() {
+  if(isTerminalTask.value) return
   if (!page.value?.imageUrl) { message.warning('原始图片不可用，无法创建区域任务'); return }
   if (bboxEditMode.value) { message.warning('请先退出检测框编辑模式'); return }
   regionJobOpen.value = true
 }
 
 async function submitRegionJob(name: string, regions: RegionDraft[]) {
+  if(isTerminalTask.value) return
   if (!currentModel.value) return
   regionJobSubmitting.value = true
   try {
     const sourceJobId = typeof route.params.taskId === 'string' ? route.params.taskId : undefined
     if (!sourceJobId) return
     const taskId = await createRegionOcrTask({
-      name, model: currentModel.value, regions, sourceJobId,
+      name, model: currentModel.value, regions, sourceJobId, illumination: illumination.value,
     })
     regionJobOpen.value = false
     progress.value = 0
@@ -842,6 +862,7 @@ async function removeComment(commentId: string) {
   finally { reviewSaving.value = false }
 }
 function handleUpload(file: File) {
+  if(isTerminalTask.value) return
   if (file.size > MAX_UPLOAD_SIZE_BYTES) {
     message.error('文件不能超过 200 MB')
     return
@@ -850,11 +871,13 @@ function handleUpload(file: File) {
   uploadPreviewOpen.value = true
 }
 function previewUpload() {
+  if(isTerminalTask.value) return
   if (!selectedFile.value) return
   pendingFile.value = selectedFile.value
   uploadPreviewOpen.value = true
 }
 function saveUpload(file: File, regions: RegionDraft[]) {
+  if(isTerminalTask.value) return
   selectedFile.value = file
   selectedRegions.value = copyRegions(regions)
   pendingFile.value = undefined
@@ -864,6 +887,7 @@ function saveUpload(file: File, regions: RegionDraft[]) {
   message.success(`文件已保存：${file.name}`)
 }
 function deleteUpload() {
+  if(isTerminalTask.value) return
   pendingFile.value = undefined
   selectedFile.value = undefined
   selectedRegions.value = []
@@ -887,13 +911,14 @@ async function handleExport(mode: ExportMode) {
 
 <template>
   <div class="workspace-view" :inert="datasetReviewSaving || bboxSaving">
-    <UploadPanel :models="availableModels" :selected-model="selectedModel" :current-model="currentModel" :job-state="jobState" :progress="progress" :file-name="selectedFileName" :file-meta="selectedFileMeta" :has-file="Boolean(selectedFile)" :region-count="selectedRegions.length" @update:selected-model="selectedModel = $event" @upload="handleUpload" @preview="previewUpload" @run="runOcr" />
+    <TerminalResultControls v-if="isTerminalTask" v-model:illumination="illumination" :file-name="selectedFileName" :busy="terminalResultBusy" @rerun="runTerminalRerun" />
+    <UploadPanel v-else v-model:illumination="illumination" :illumination-disabled="taskLoading || regionJobSubmitting" :models="availableModels" :selected-model="selectedModel" :current-model="currentModel" :job-state="jobState" :progress="progress" :file-name="selectedFileName" :file-meta="selectedFileMeta" :has-file="Boolean(selectedFile)" :region-count="selectedRegions.length" @update:selected-model="selectedModel = $event" @upload="handleUpload" @preview="previewUpload" @run="runOcr" />
     <div v-if="taskLoading" class="workspace-empty"><a-spin size="large" /><p>正在加载任务数据…</p></div>
     <OcrProgressCard v-else-if="polledTask && !['succeeded', 'partial_success'].includes(polledTask.jobStatus || 'queued')" :task="polledTask" :elapsed-ms="elapsedMs" :request-failed="Boolean(pollingError)" @retry="retryTask" />
     <Splitpanes v-else-if="page" ref="workspace" class="workspace">
       <Pane :size="splitLayout.documentSizePercent" :min-size="splitLayout.documentMinPercent">
         <div class="document-workspace">
-          <DocumentViewer v-if="displayPage" :pages="pages" :page="displayPage" :current-page="currentPage" :selected-id="selectedId" :zoom="zoom" :job-state="jobState" :progress="progress" :edit-mode="bboxEditMode" :can-undo="Boolean(bboxUndoStack.length) && !pendingGeometrySnapshot" :can-redo="Boolean(bboxRedoStack.length) && !pendingGeometrySnapshot" :has-unsaved-changes="bboxDirty" :has-pending-geometry="Boolean(pendingGeometrySnapshot)"
+          <DocumentViewer :allow-region-job="!isTerminalTask" v-if="displayPage" :pages="pages" :page="displayPage" :current-page="currentPage" :selected-id="selectedId" :zoom="zoom" :job-state="jobState" :progress="progress" :edit-mode="bboxEditMode" :can-undo="Boolean(bboxUndoStack.length) && !pendingGeometrySnapshot" :can-redo="Boolean(bboxRedoStack.length) && !pendingGeometrySnapshot" :has-unsaved-changes="bboxDirty" :has-pending-geometry="Boolean(pendingGeometrySnapshot)"
             :terminal-edit-mode="terminalEditMode" :terminal-dirty="terminalDirty" :terminal-saving="terminalSaving" :selected-terminal-id="selectedTerminalId"
             @page-change="switchPage" @select="selectItem" @zoom-change="zoom = $event" @edit-toggle="toggleBboxEdit" @undo="undoBboxEdit" @redo="redoBboxEdit" @save="saveBboxEdits" @polygon-preview="previewDraftPolygon" @geometry-confirm="confirmGeometryEdit" @geometry-cancel="cancelGeometryEdit" @create-bbox="beginManualBbox" @create-region-job="openSourceRegionJob"
             @terminal-toggle="toggleTerminalEdit" @terminal-save="saveTerminalEdits" @terminal-cancel="cancelTerminalEdit" @terminal-delete="deleteTerminalPoint"
@@ -912,8 +937,8 @@ async function handleExport(mode: ExportMode) {
     </div>
     <CorrectionModal v-model:open="correctionOpen" :item="correctionTarget" :source-mode="sourceCorrectionMode" :image-url="page?.imageUrl" :source-width="page?.sourceWidth" :source-height="page?.sourceHeight" :saving="reviewSaving" @save="saveCorrection" />
     <CommentDrawer v-model:open="commentOpen" :item="selectedItem" :current-user-id="user?.id" :saving="reviewSaving" @save="saveComment" @update-comment="editComment" @delete-comment="removeComment" />
-    <UploadPreviewModal :open="uploadPreviewOpen" :file="pendingFile" :initial-regions="pendingFile === selectedFile ? selectedRegions : []" @close="uploadPreviewOpen = false" @delete="deleteUpload" @save="saveUpload" />
-    <RegionJobModal
+    <UploadPreviewModal v-if="!isTerminalTask" :open="uploadPreviewOpen" :file="pendingFile" :initial-regions="pendingFile === selectedFile ? selectedRegions : []" @close="uploadPreviewOpen = false" @delete="deleteUpload" @save="saveUpload" />
+    <RegionJobModal v-if="!isTerminalTask"
       :open="regionJobOpen"
       :image-url="page?.imageUrl"
       :source-width="page?.sourceWidth"

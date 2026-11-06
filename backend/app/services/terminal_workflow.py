@@ -80,6 +80,7 @@ class TerminalWorkflowService:
         if not value or value['owner_id'] != owner:
             raise HTTPException(404, 'Workflow not found')
         if value.get('terminal_task_id'): self.check_task(value['terminal_task_id'], owner)
+        value.setdefault('illumination', 'none')
         return value
 
     def create(self, file_id, owner, persist=True):
@@ -88,7 +89,7 @@ class TerminalWorkflowService:
             raise HTTPException(422, '请选择已上传的图片')
         value = dict(id=uid(), owner_id=owner, file_id=file_id, revision=0,
                      confirmed=0, regions=[], side=None, points=[], model_points=[],
-                     start_point_id=None, ordering=None, bindings=[], job_id=None,
+                     start_point_id=None, ordering=None, bindings=[], job_id=None, illumination='none',
                      width=file['width_px'], height=file['height_px'])
         if persist: self.store.put(KIND, value['id'], value)
         return value
@@ -161,6 +162,13 @@ class TerminalWorkflowService:
         old = self.current(ident, owner, revision)
         value = deepcopy(old)
         for key, data in changes.items():
+            if key == 'illumination':
+                if data not in ('none', 'he', 'clahe'):
+                    raise HTTPException(422, '光照处理必须为原图、全局 HE 或 CLAHE')
+                if old['confirmed'] < 5:
+                    raise HTTPException(409, '请先完成前五步确认')
+                value['illumination'] = data
+                continue
             if key == 'side' and old.get('task_side') and data != old['task_side']:
                 raise HTTPException(422, '识别方向必须与当前侧一致')
             if key not in FIELDS: raise HTTPException(422, '不支持的配置')
@@ -248,6 +256,30 @@ class TerminalWorkflowService:
         value.update(candidates=candidates, bindings=bindings, confirmed=5, positions_generated=True)
         return self.save(old,value)
 
+    def rerun_bound(self, task_id, side, source_job_id, illumination, owner):
+        from app.services.terminal import TerminalService
+        task = TerminalService(self.core).get(task_id, owner)
+        job = self.core.job(source_job_id, owner)
+        if job['status'] not in ('succeeded','partial_success'):
+            raise HTTPException(409, '请等待识别完成')
+        snapshot = self.store.get('terminal_workflow_snapshot', source_job_id)
+        if not snapshot or snapshot.get('confirmed',0) < 5:
+            raise HTTPException(409, '该结果没有完整的端子排配置，请通过重新识别进入标准流程')
+        if snapshot.get('terminal_task_id') != task_id or snapshot.get('task_side') != side:
+            raise HTTPException(422, '识别结果不属于当前端子排侧别')
+        for step in range(1,6): self.validate(snapshot,step)
+        active = self.side_workflow(task_id, side, owner)
+        if active and active.get('enhancement_source_job_id') == source_job_id and active.get('illumination') == illumination:
+            return self.recognize(active['id'], owner, active['revision'])
+        if active and active['id'] != snapshot['id'] and not active.get('job_id'):
+            raise HTTPException(409, '本侧已有未完成的新流程，请先处理该流程')
+        draft = self.create_bound(task_id, side, snapshot['file_id'], owner, replace=True)
+        value = deepcopy(snapshot)
+        value.update(id=draft['id'], revision=draft['revision'], job_id=None, confirmed=5,
+                     illumination=illumination, enhancement_source_job_id=source_job_id)
+        saved = self.save(draft,value)
+        return self.recognize(saved['id'],owner,saved['revision'])
+
     def recognize(self, ident, owner, revision):
         existing = self.get(ident, owner)
         if existing['job_id'] == 'submitting': raise HTTPException(409, '识别任务正在提交')
@@ -269,7 +301,7 @@ class TerminalWorkflowService:
         value['job_id'] = 'submitting'
         reserved = self.save(old, value)
         try:
-            body = RegionJobCreate(name=(f"{task['name'][:180]} / {'左侧' if old['task_side']=='left' else '右侧'}" if old.get('terminal_task_id') else '端子排向导识别'), file_id=old['file_id'], model_id='mock', model_version='1.0.0', pages=[{'page_no':1,'regions':[{'client_id':r['id'],'bbox':r['bbox']} for r in old['regions']]}])
+            body = RegionJobCreate(name=(f"{task['name'][:180]} / {'左侧' if old['task_side']=='left' else '右侧'}" if old.get('terminal_task_id') else '端子排向导识别'), file_id=old['file_id'], illumination=old.get('illumination', 'none'), model_id='mock', model_version='1.0.0', pages=[{'page_no':1,'regions':[{'client_id':r['id'],'bbox':r['bbox']} for r in old['regions']]}])
             result = self.core.create_region_job(body, owner, workflow_snapshot=snapshot)
             value = deepcopy(reserved)
             value['job_id'] = result['id']

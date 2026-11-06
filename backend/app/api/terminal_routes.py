@@ -129,3 +129,16 @@ def create_side_workflow(task_id: str, side: Literal['left', 'right'], body: Sid
     from app.services.terminal_workflow import TerminalWorkflowService
     owner = authenticated_user(request, authorization)['id']
     return envelope(TerminalWorkflowService(service(request)).create_bound(task_id, side, body.file_id, owner, body.replace, [dict(id=r.id,bbox=list(r.bbox)) for r in body.regions] if body.regions is not None else None))
+
+
+class TerminalEnhancementRerun(BaseModel):
+    source_job_id: str
+    illumination: Literal['none','he','clahe']
+
+
+@router.post('/{task_id}/sides/{side}/enhancement-reruns')
+def rerun_terminal_enhancement(task_id: str, side: Literal['left','right'], body: TerminalEnhancementRerun,
+                               request: Request, authorization: Auth = None):
+    from app.services.terminal_workflow import TerminalWorkflowService
+    owner = authenticated_user(request, authorization)['id']
+    return envelope(TerminalWorkflowService(service(request)).rerun_bound(task_id,side,body.source_job_id,body.illumination,owner))
