@@ -17,6 +17,7 @@ const OcrResultGrid = defineAsyncComponent(() => import('./OcrResultGrid.vue'))
 const props = defineProps<{
   page: OcrPage
   pages: OcrPage[]
+  regionListIds?: string[]
   selectedId: string
   selectedTerminalId?: string
   modelLabel: string
@@ -84,10 +85,15 @@ const filteredItems = computed(() => filterOcrItems(props.page.items.filter(item
 const displayedItems = computed(() => coordinateSorted.value
   ? sortOcrItemsByCoordinates(filteredItems.value)
   : filteredItems.value)
+const listItems = computed(() => {
+  if (!props.regionListIds) return displayedItems.value
+  const ids = new Set(props.regionListIds)
+  return displayedItems.value.filter(item => ids.has(item.id))
+})
 const hasTerminalResult = computed(() => Array.isArray(props.page.terminalPoints))
 const terminalRows = computed(() => terminalTableRows(props.page.terminalPoints || [], props.page.items))
 const visibleSelectionIds = computed(() => viewMode.value === 'table' && hasTerminalResult.value
-  ? terminalRows.value.filter(row => !row.item || displayedItems.value.some(item => item.id === row.item!.id)).map(row => row.selectionId) : displayedItems.value.map(item => item.id))
+  ? terminalRows.value.filter(row => !row.item || displayedItems.value.some(item => item.id === row.item!.id)).map(row => row.selectionId) : (viewMode.value === 'list' ? listItems.value : displayedItems.value).map(item => item.id))
 const selectedReviewIds = computed(() => props.page.items.filter(item => selectedIds.value.includes(item.id)).map(item => item.id))
 const allVisibleSelected = computed(() => visibleSelectionIds.value.length > 0 && visibleSelectionIds.value.every(id => selectedIds.value.includes(id)))
 function scoreColor(score: number) {
@@ -194,7 +200,7 @@ watch(() => props.page, () => { selectedIds.value = []; coordinateSorted.value =
       <span v-if="viewMode === 'table' && hasTerminalResult">删除和恢复仅作用于所选行中的 OCR 结果</span>
     </div>
     <div v-if="viewMode === 'list'" class="result-list">
-      <article v-for="(item, displayIndex) in displayedItems" :key="item.id" :data-result-id="item.id" class="result-card" :class="{ selected: selectedId === item.id, corrected: item.corrected }" @click="emit('select', item.id)">
+      <article v-for="(item, displayIndex) in listItems" :key="item.id" :data-result-id="item.id" class="result-card" :class="{ selected: selectedId === item.id, corrected: item.corrected }" @click="emit('select', item.id)">
         <a-checkbox class="result-select" :checked="selectedIds.includes(item.id)" @click.stop @update:checked="toggleSelected(item.id, $event)" />
         <div class="result-index">{{ String(displayIndex + 1).padStart(2, '0') }}</div>
         <div class="result-main">
@@ -219,7 +225,7 @@ watch(() => props.page, () => { selectedIds.value = []; coordinateSorted.value =
           <button title="删除结果" @click.stop="emit('review', [item.id], 'deleted')"><DeleteOutlined /> 删除</button>
         </div>
       </article>
-      <a-empty v-if="!displayedItems.length" description="没有匹配的识别结果" />
+      <a-empty v-if="!listItems.length" description="没有匹配的识别结果" />
     </div>
     <TerminalBusinessGrid v-if="hasTerminalResult" v-show="viewMode === 'table'" :key="`${route.params.taskId}:${page.no}`" ref="businessGrid" :selected-terminal-id="selectedTerminalId" :selected-source-id="selectedId" :page="page" :editing-disabled="editingDisabled" @select-business="emit('selectBusiness', $event)" @select-terminal="emit('selectTerminal', $event)" @changed="emit('businessChanged')" @select-source="emit('select', $event)" @review="(ids, status) => emit('review', ids, status)" />
     <OcrResultGrid v-if="viewMode === 'table' && !hasTerminalResult" :rows="gridRows" :selected-id="selectedId"

@@ -155,6 +155,7 @@ function finishDrawing() {
     <v-layer>
       <v-rect :config="{ name: 'canvas-background', x: 0, y: 0, width: 700, height: 760, fill: '#fbfaf6', shadowColor: '#0b1512', shadowBlur: 25, shadowOpacity: .2, shadowOffsetY: 8 }" />
       <v-image v-if="sourceImage" :config="{ name: 'source-image', image: sourceImage, x: imageTransform.x, y: imageTransform.y, width: imageTransform.width, height: imageTransform.height }" />
+      <template v-if="!page.isRegionView"><v-rect v-for="region in page.regionImages || []" :key="region.id" :config="{...bboxToCanvasRect(region.bbox,editableTransform),stroke:'#168b6c',strokeWidth:2,dash:[8,4],listening:false}" /></template>
       <template v-if="!page.imageUrl">
         <v-rect :config="{ x: 50, y: 38, width: 8, height: 78, fill: '#168b6c' }" />
         <v-text :config="{ x: 74, y: 40, text: page.no === 1 ? 'JUXI PRECISION' : page.no === 2 ? 'JUXI MACHINERY' : 'JUXI LOGISTICS', fontSize: 13, fontStyle: 'bold', fill: '#168b6c', letterSpacing: 2 }" />
@@ -164,7 +165,7 @@ function finishDrawing() {
         <v-text v-for="item in page.items" :key="`text-${item.id}`" :config="{ x: item.bbox[0] + 2, y: item.bbox[1] + 5, text: item.corrected || item.text, fontSize: Math.min(25, Math.max(13, item.bbox[3] - item.bbox[1] - 9)), fontStyle: item.id === page.items[0].id ? 'bold' : 'normal', fill: '#252c29', width: item.bbox[2] - item.bbox[0], ellipsis: true }" />
       </template>
     </v-layer>
-    <v-layer>
+    <v-layer :config="page.isRegionView ? {clipX:imageTransform.x,clipY:imageTransform.y,clipWidth:imageTransform.width,clipHeight:imageTransform.height} : {}">
       <template v-for="item in page.items" :key="item.id">
         <template v-if="!(editMode && selectedId === item.id)">
           <v-line v-if="item.polygon" :config="{ points: canvasPolygon(item), closed: true, stroke: resultBoxColor(selectedId === item.id), strokeWidth: selectedId === item.id ? 3 : 1.5, fill: selectedId === item.id ? 'rgba(255,77,79,.10)' : 'rgba(182,191,188,.025)', hitStrokeWidth: 12 }" @click="emit('select', item.id)" @tap="emit('select', item.id)" />

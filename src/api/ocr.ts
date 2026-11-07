@@ -67,7 +67,7 @@ type ApiResult = {
   manual_confirmed?: boolean
   table_note?: string
   table_revision?: number
-  attributes?: { terminal_point_id?: string; source?: string; is_unresolved?: boolean; raw_text?: string }
+  attributes?: { roi_id?:string; terminal_point_id?: string; source?: string; is_unresolved?: boolean; raw_text?: string }
 }
 
 type ApiCorrection = {
@@ -182,6 +182,7 @@ export function mapApiResult(result: ApiResult): OcrItem {
     id: result.id,
     text: result.text,
     rawText: result.attributes?.raw_text,
+    ...(result.attributes?.roi_id ? {sourceRegionId:result.attributes.roi_id} : {}),
     terminalPointId: result.attributes?.terminal_point_id,
     score: result.confidence,
     bbox: result.bbox,
@@ -358,12 +359,14 @@ export async function getOcrPages(taskId: string): Promise<OcrPage[]> {
 
   return Promise.all(
     pagesResponse.data.data.items.map(async (page) => {
-      const [response, imageUrl] = await Promise.all([
+      const [response, imageUrl, regionImages] = await Promise.all([
         apiClient.get<ApiEnvelope<ApiPageResults>>(`/ocr/jobs/${taskId}/pages/${page.page_no}/results`),
         loadProtectedImage(page.image.url),
+        loadRegionImages(taskId,page.page_no),
       ])
 
       return {
+        ...(regionImages.length ? {regionImages} : {}),
         no: page.page_no,
         label: page.label,
         items: response.data.data.items.map(mapApiResult),
@@ -379,6 +382,17 @@ export async function getOcrPages(taskId: string): Promise<OcrPage[]> {
       }
     }),
   )
+}
+
+async function loadRegionImages(job:string,page:number) {
+  try {
+    const response=await apiClient.get(`/ocr/jobs/${job}/pages/${page}/region-images`)
+    return await Promise.all((response.data.data.items as {id:string;label:string;bbox:[number,number,number,number];width:number;height:number;image_url:string;thumbnail_url:string}[]).map(async r=>{
+      let imageUrl:string|undefined,thumbnailUrl:string|undefined
+      try {imageUrl=await loadProtectedImage(r.image_url);thumbnailUrl=await loadProtectedImage(r.thumbnail_url);return {...r,imageUrl,thumbnailUrl}}
+      catch {return {...r,imageUrl,thumbnailUrl:thumbnailUrl || imageUrl,failed:!imageUrl}}
+    }))
+  } catch {return []}
 }
 
 // 下载受保护图片，并将其转换成浏览器可访问的 blob URL。
@@ -398,6 +412,7 @@ async function loadProtectedImage(url: string | null) {
 export function releasePageImages(pages: OcrPage[]) {
   for (const page of pages) {
     if (page.imageUrl?.startsWith('blob:')) URL.revokeObjectURL(page.imageUrl)
+    for(const region of page.regionImages || []) for(const url of [region.imageUrl,region.thumbnailUrl]) if(url?.startsWith('blob:')) URL.revokeObjectURL(url)
   }
 }
 

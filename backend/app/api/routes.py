@@ -605,3 +605,16 @@ def sync_terminal_document(job_id: str, page_no: int, body: "TerminalDocumentSyn
     actor = authenticated_user(request, authorization)
     return envelope(TerminalDocumentService(service(request)).save(
         job_id, page_no, TerminalDocumentSave(base_revision=body.base_revision, records=body.records), actor['id'], body.sources))
+
+@router.get('/ocr/jobs/{job_id}/pages/{page_no}/region-images')
+def region_images(job_id: str, page_no: int, request: Request, authorization: Annotated[str | None, Header()] = None):
+    from app.services.region_images import RegionImageService
+    actor=authenticated_user(request,authorization)
+    return envelope(RegionImageService(service(request)).listing(job_id,page_no,actor['id']))
+
+
+@router.get('/ocr/jobs/{job_id}/pages/{page_no}/region-images/{region_id}/content')
+def region_image_content(job_id: str, page_no: int, region_id: str, request: Request, thumbnail: bool = False, authorization: Annotated[str | None, Header()] = None):
+    from app.services.region_images import RegionImageService
+    actor=authenticated_user(request,authorization)
+    return FileResponse(RegionImageService(service(request)).image(job_id,page_no,region_id,actor['id'],thumbnail),media_type='image/png')

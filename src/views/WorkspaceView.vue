@@ -28,6 +28,7 @@ import { useOcrJobPolling } from '../composables/useOcrJobPolling'
 import { createEmptyWorkspaceContent } from '../workspaceState'
 import { bboxToPolygon, cloneEditableItems, polygonToBbox, type EditableOcrItem } from '../bboxEditing'
 import { terminalSidePath, terminalViewPositions } from '../terminalState'
+import { itemsInRegion } from '../regionImageView'
 import { copyRegions } from '../regionSelection'
 import { orderedTerminalPoints } from '../terminalPairTable'
 import { saveWithTerminalPointConfirmation } from '../terminalPointEditing'
@@ -104,6 +105,14 @@ let datasetStatusEpoch = 0
 const { task: polledTask, requestError: pollingError, elapsedMs, start: startPolling, stop: stopPolling, reset: resetPolling } = useOcrJobPolling()
 
 const page = computed(() => pages.value[currentPage.value - 1])
+const activeRegionId = ref('')
+const activeRegion = computed(() => page.value?.regionImages?.find(region => region.id === activeRegionId.value && region.imageUrl && !region.failed))
+const regionListIds = computed(() => page.value && activeRegion.value
+  ? itemsInRegion(page.value, activeRegion.value).map(item => item.id)
+  : undefined)
+watch([() => route.params.taskId, currentPage], () => { activeRegionId.value = '' }, { flush: 'sync' })
+watch(activeRegion, region => { if (!region) activeRegionId.value = '' })
+
 const resultPanelPage = computed(() => {
   if (!page.value) return undefined
   if (bboxEditMode.value) return { ...page.value, items: bboxDraftItems.value }
@@ -918,7 +927,7 @@ async function handleExport(mode: ExportMode) {
     <Splitpanes v-else-if="page" ref="workspace" class="workspace">
       <Pane :size="splitLayout.documentSizePercent" :min-size="splitLayout.documentMinPercent">
         <div class="document-workspace">
-          <DocumentViewer :allow-region-job="!isTerminalTask" v-if="displayPage" :pages="pages" :page="displayPage" :current-page="currentPage" :selected-id="selectedId" :zoom="zoom" :job-state="jobState" :progress="progress" :edit-mode="bboxEditMode" :can-undo="Boolean(bboxUndoStack.length) && !pendingGeometrySnapshot" :can-redo="Boolean(bboxRedoStack.length) && !pendingGeometrySnapshot" :has-unsaved-changes="bboxDirty" :has-pending-geometry="Boolean(pendingGeometrySnapshot)"
+          <DocumentViewer :active-region-id="activeRegionId" @region-change="activeRegionId = $event" :allow-region-job="!isTerminalTask" v-if="displayPage" :pages="pages" :page="displayPage" :current-page="currentPage" :selected-id="selectedId" :zoom="zoom" :job-state="jobState" :progress="progress" :edit-mode="bboxEditMode" :can-undo="Boolean(bboxUndoStack.length) && !pendingGeometrySnapshot" :can-redo="Boolean(bboxRedoStack.length) && !pendingGeometrySnapshot" :has-unsaved-changes="bboxDirty" :has-pending-geometry="Boolean(pendingGeometrySnapshot)"
             :terminal-edit-mode="terminalEditMode" :terminal-dirty="terminalDirty" :terminal-saving="terminalSaving" :selected-terminal-id="selectedTerminalId"
             @page-change="switchPage" @select="selectItem" @zoom-change="zoom = $event" @edit-toggle="toggleBboxEdit" @undo="undoBboxEdit" @redo="redoBboxEdit" @save="saveBboxEdits" @polygon-preview="previewDraftPolygon" @geometry-confirm="confirmGeometryEdit" @geometry-cancel="cancelGeometryEdit" @create-bbox="beginManualBbox" @create-region-job="openSourceRegionJob"
             @terminal-toggle="toggleTerminalEdit" @terminal-save="saveTerminalEdits" @terminal-cancel="cancelTerminalEdit" @terminal-delete="deleteTerminalPoint"
@@ -926,7 +935,7 @@ async function handleExport(mode: ExportMode) {
         </div>
       </Pane>
       <Pane :size="splitLayout.resultSizePercent" :min-size="splitLayout.resultMinPercent">
-        <OCRResultPanel v-if="resultPanelPage" ref="resultPanel" :selected-terminal-id="selectedTerminalId" :save-table="saveTableCell" :save-cable="saveCableCell" :editing-disabled="terminalEditMode" :page="resultPanelPage" :pages="pages" :selected-id="selectedId" :model-label="currentModel?.label || selectedModel" :low-confidence-threshold="settings.lowConfidenceThreshold" :show-confidence="settings.showConfidence" :can-undo-review="Boolean(lastReviewAction)" :dataset-reviewed="Boolean(datasetReviewed)" :dataset-review-saving="datasetReviewSaving" :dataset-review-disabled="jobState !== 'done' || taskLoading || reviewSaving || resultMutationSaving || bboxSaving || terminalSaving || terminalDirty || correctionOpen || manualTextOpen || Boolean(pendingGeometrySnapshot)" @complete-review="finishDatasetReview" @select="selectItem" @correct="openCorrection" @correct-source="openSourceCorrection" @select-terminal="id => { selectedTerminalId = id; selectedId = '' }" @business-changed="invalidateDatasetReview" @select-business="selection => { selectItem(selection.sourceId); selectedTerminalId = selection.pointId }" @comment="openComment" @export="handleExport" @review="reviewResults" @visible-change="visibleResultIds = $event" @undo="undoReviewAction" />
+        <OCRResultPanel :region-list-ids="regionListIds" v-if="resultPanelPage" ref="resultPanel" :selected-terminal-id="selectedTerminalId" :save-table="saveTableCell" :save-cable="saveCableCell" :editing-disabled="terminalEditMode" :page="resultPanelPage" :pages="pages" :selected-id="selectedId" :model-label="currentModel?.label || selectedModel" :low-confidence-threshold="settings.lowConfidenceThreshold" :show-confidence="settings.showConfidence" :can-undo-review="Boolean(lastReviewAction)" :dataset-reviewed="Boolean(datasetReviewed)" :dataset-review-saving="datasetReviewSaving" :dataset-review-disabled="jobState !== 'done' || taskLoading || reviewSaving || resultMutationSaving || bboxSaving || terminalSaving || terminalDirty || correctionOpen || manualTextOpen || Boolean(pendingGeometrySnapshot)" @complete-review="finishDatasetReview" @select="selectItem" @correct="openCorrection" @correct-source="openSourceCorrection" @select-terminal="id => { selectedTerminalId = id; selectedId = '' }" @business-changed="invalidateDatasetReview" @select-business="selection => { selectItem(selection.sourceId); selectedTerminalId = selection.pointId }" @comment="openComment" @export="handleExport" @review="reviewResults" @visible-change="visibleResultIds = $event" @undo="undoReviewAction" />
       </Pane>
     </Splitpanes>
     <div v-else class="workspace-empty">

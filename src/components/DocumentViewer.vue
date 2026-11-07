@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { AimOutlined, CheckCircleFilled, CheckOutlined, CloseOutlined, EditOutlined, FileTextOutlined, LeftOutlined, RedoOutlined, RightOutlined, SaveOutlined, UndoOutlined, ZoomInOutlined, ZoomOutOutlined } from '@ant-design/icons-vue'
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { OcrPage, OcrPolygon } from '../types/ocr'
+import { message } from 'ant-design-vue'
+import { containsBox, regionDisplayPage, originalPolygon } from '../regionImageView'
 import BBoxLayer from './BBoxLayer.vue'
 
-defineProps<{
+const props=defineProps<{
   pages: OcrPage[]
   page: OcrPage
   currentPage: number
+  activeRegionId?: string
   selectedId: string
   zoom: number
   jobState: 'ready' | 'running' | 'done'
@@ -24,6 +27,28 @@ defineProps<{
   selectedTerminalId?: string
 }>()
 
+const activeRegion=computed(()=>props.page.regionImages?.find(r=>r.id===props.activeRegionId && r.imageUrl && !r.failed))
+const canvasPage=computed(()=>activeRegion.value ? regionDisplayPage(props.page,activeRegion.value) : props.page)
+function chooseRegion(id:string) {
+  if(props.hasUnsavedChanges || props.hasPendingGeometry || props.terminalEditMode || props.terminalDirty || props.terminalSaving) {message.info('请先保存或取消当前编辑，再切换图片视图');return}
+  emit('regionChange', id)
+}
+const selectedBoxCrossesRegion = computed(() => {
+  const item = props.page.items.find(item => item.id === props.selectedId)
+  return !!(activeRegion.value && item && !containsBox(activeRegion.value, item.bbox))
+})
+function toggleTextEdit() {
+  if (!props.editMode && selectedBoxCrossesRegion.value) {
+    message.info('请切回原图编辑跨越区域边界的检测框')
+    return
+  }
+  emit('editToggle')
+}
+function previewPolygon(id:string,polygon:OcrPolygon) {emit('polygonPreview',id,originalPolygon(polygon,activeRegion.value))}
+function createBox(box:OcrPage['items'][number]['bbox']) {
+ const x=activeRegion.value?.bbox[0] || 0,y=activeRegion.value?.bbox[1] || 0
+ emit('createBbox',[box[0]+x,box[1]+y,box[2]+x,box[3]+y])
+}
 const railCollapsed = ref(false)
 try { railCollapsed.value = localStorage.getItem('ddocr.pageRailCollapsed') === 'true' } catch { /* Storage may be unavailable. */ }
 watch(railCollapsed, value => {
@@ -32,6 +57,7 @@ watch(railCollapsed, value => {
 
 const emit = defineEmits<{
   pageChange: [page: number]
+  regionChange: [id: string]
   select: [id: string]
   zoomChange: [zoom: number]
   editToggle: []
@@ -64,6 +90,11 @@ const emit = defineEmits<{
       <div><b>第 {{ p.no }} 页</b><small>{{ p.label }}</small></div>
       <CheckCircleFilled v-if="jobState === 'done'" />
     </button>
+    <div v-if="page.regionImages?.length" class="region-thumbnails">
+      <span class="region-navigation-title">识别区域</span>
+      <button class="region-thumb" :class="{active:!activeRegion}" @click="chooseRegion('')"><img :src="page.imageUrl" alt="原图缩略图"/><span>原图<small>完整图片</small></span></button>
+      <button v-for="r in page.regionImages" :key="r.id" class="region-thumb" :class="{active:activeRegionId===r.id}" :disabled="r.failed || !r.imageUrl" @click="chooseRegion(r.id)"><img v-if="r.thumbnailUrl" :src="r.thumbnailUrl" :alt="r.label"/><span>{{r.label}}<small>{{r.failed?'加载失败，可刷新重试':`${r.width} × ${r.height}`}}</small></span></button>
+    </div>
     <div class="job-summary">
       <span class="status-dot"></span>
       <div><b>{{ jobState === 'running' ? '正在识别' : '识别已完成' }}</b><small v-if="jobState === 'running'">{{ progress }}% · 正在处理页面</small></div>
@@ -79,8 +110,8 @@ const emit = defineEmits<{
       </div>
       <div class="zoom-control">
         <button v-if="jobState === 'done' && allowRegionJob !== false" :disabled="editMode || terminalEditMode" @click="emit('createRegionJob')"><AimOutlined /> 区域识别</button>
-        <button :disabled="terminalEditMode" :class="{ active: editMode }" @click="emit('editToggle')"><EditOutlined /> {{ editMode ? '退出编辑' : '编辑框' }}</button>
-        <button v-if="page.terminalPoints" :disabled="editMode || terminalSaving" :class="{ active: terminalEditMode }" @click="emit('terminalToggle')"><EditOutlined /> {{ terminalEditMode ? '退出端子编辑' : '编辑端子点' }}</button>
+        <button :disabled="terminalEditMode" :class="{ active: editMode }" @click="toggleTextEdit"><EditOutlined /> {{ editMode ? '退出编辑' : '编辑框' }}</button>
+        <button v-if="page.terminalPoints && !activeRegion" :disabled="editMode || terminalSaving" :class="{ active: terminalEditMode }" @click="emit('terminalToggle')"><EditOutlined /> {{ terminalEditMode ? '退出端子编辑' : '编辑端子点' }}</button>
         <div class="zoom-buttons">
         <button @click="emit('zoomChange', Math.max(.55, zoom - .1))"><ZoomOutOutlined /></button>
         <span>{{ Math.round(zoom * 100) }}%</span>
@@ -93,6 +124,7 @@ const emit = defineEmits<{
         <span v-if="page.terminalPoints"> · 端子对 {{ page.terminalPoints.length }} 个<span v-if="page.terminalModelCount !== null && page.terminalModelCount !== undefined && page.terminalModelCount !== page.terminalPoints.length">（模型原始 {{ page.terminalModelCount }} 个）</span></span>
         <span v-else-if="page.terminalError"> · 端子检测不可用</span>
       </div>
+    <div v-if="activeRegion" class="region-view-notice"><span>{{activeRegion.label}} · {{activeRegion.width}} × {{activeRegion.height}} px · 端子点仅供查看</span><button @click="chooseRegion('')">查看原图位置 / 编辑端子点</button></div>
     <div v-if="editMode" class="edit-action-bar">
       <span class="edit-action-title"><EditOutlined /> 检测框编辑</span>
       <button type="button" :disabled="!canUndo" title="撤销" @click="emit('undo')"><UndoOutlined /> 撤销</button>
@@ -103,7 +135,7 @@ const emit = defineEmits<{
       <button type="button" :disabled="!hasUnsavedChanges || hasPendingGeometry" title="保存全部修改" @click.stop="emit('save')"><SaveOutlined /> 保存全部</button>
       <span class="edit-action-help">拖动框体移动，拖动四角调整形状</span>
     </div>
-    <div v-if="terminalEditMode" class="edit-action-bar">
+    <div v-if="terminalEditMode && !activeRegion" class="edit-action-bar">
       <span class="edit-action-title">端子点编辑</span>
       <span>点击原图空白处补点；拖动蓝点调整位置，选中后可删除</span>
       <button type="button" :disabled="!selectedTerminalId || terminalSaving" @click="emit('terminalDelete')"><CloseOutlined /> 删除选中点</button>
@@ -113,14 +145,18 @@ const emit = defineEmits<{
     <div v-if="page.terminalError" class="edit-action-bar"><span>端子检测不可用：{{ page.terminalError.message }}</span></div>
     <div class="canvas-viewport">
       <div class="page-canvas" :style="{ width: `${700 * zoom}px`, height: `${760 * zoom}px` }">
-        <BBoxLayer :page="page" :selected-id="selectedId" :zoom="zoom" :edit-mode="editMode"
-          :terminal-edit-mode="terminalEditMode && !terminalSaving" :selected-terminal-id="selectedTerminalId"
-          @select="emit('select', $event)" @polygon-preview="(id, polygon) => emit('polygonPreview', id, polygon)"
-          @create="emit('createBbox', $event)" @terminal-create="emit('terminalCreate', $event)"
+        <BBoxLayer :key="`${page.no}:${activeRegionId}`" :page="canvasPage" :selected-id="selectedId" :zoom="zoom" :edit-mode="editMode && !selectedBoxCrossesRegion"
+          :terminal-edit-mode="!activeRegion && terminalEditMode && !terminalSaving" :selected-terminal-id="selectedTerminalId"
+          @select="emit('select', $event)" @polygon-preview="previewPolygon"
+          @create="createBox" @terminal-create="!activeRegion && emit('terminalCreate', $event)"
           @terminal-select="emit('terminalSelect', $event)"
-          @terminal-move="(id, point) => emit('terminalMove', id, point)" />
+          @terminal-move="(id, point) => !activeRegion && emit('terminalMove', id, point)" />
       </div>
     </div>
     <div class="legend"><span><i class="neutral"></i> 普通检测框</span><span><i class="selected"></i> 当前选中</span><span v-if="page.terminalPoints"><i style="background:#1677ff;border-radius:50%"></i> 端子对中心点</span><em>点击检测框可定位右侧结果</em></div>
   </section>
 </template>
+
+<style scoped>
+.region-thumbnails{display:flex;flex-direction:column;gap:8px;margin-top:18px;overflow-y:auto;min-height:0}.region-navigation-title{font-size:11px;color:#81968a}.region-thumb{display:flex;align-items:center;gap:9px;padding:8px;border:1px solid #dce5df;border-radius:7px;background:white;text-align:left;cursor:pointer;flex-shrink:0}.region-thumb.active{border-color:#168b6c;background:#edf6f1}.region-thumb:disabled{opacity:.5;cursor:default}.region-thumb img{width:48px;height:54px;object-fit:contain;background:#edf0ed}.region-thumb span{font-size:12px;color:#365b44;min-width:0}.region-thumb small{display:block;margin-top:6px;font-size:9px;color:#8b9b90}.region-view-notice{display:flex;align-items:center;justify-content:space-between;padding:9px 14px;background:#edf6f1;color:#3b7154;font-size:11px}.region-view-notice button{border:0;background:transparent;color:#168b6c;cursor:pointer}.page-rail.collapsed .region-thumb span,.page-rail.collapsed .region-navigation-title{display:none}
+</style>

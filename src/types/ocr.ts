@@ -19,6 +19,7 @@ export type OcrItem = {
   text: string
   terminalPointId?: string
   rawText?: string
+  sourceRegionId?:string
   score: number
   bbox: [number, number, number, number]
   polygon?: OcrPolygon
@@ -47,7 +48,11 @@ export type TerminalPoint = {
   score?: number
 }
 
+export type RegionImage = {id:string;label:string;bbox:[number,number,number,number];width:number;height:number;imageUrl?:string;thumbnailUrl?:string;failed?:boolean}
+
 export type OcrPage = {
+  regionImages?:RegionImage[]
+  isRegionView?:boolean
   no: number
   label: string
   items: OcrItem[]
