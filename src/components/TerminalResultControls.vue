@@ -6,7 +6,7 @@ defineEmits<{'update:illumination':[value:IlluminationMode];rerun:[]}>()
 </script>
 <template>
   <section class="terminal-result-controls" aria-label="端子排结果操作">
-    <div class="terminal-result-file"><b>{{fileName}}</b><small>沿用已确认的文字区域、骨架、起始端子及编号规则</small></div>
+    <div class="terminal-result-file"><b>{{fileName}}</b><small>沿用已确认的文字区域、骨架、起始与末尾端子及编号规则</small></div>
     <IlluminationSelect :model-value="illumination" :disabled="busy" compact @update:model-value="$emit('update:illumination',$event)" />
     <a-button type="primary" :loading="busy" @click="$emit('rerun')">按已确认配置重新识别</a-button>
   </section>

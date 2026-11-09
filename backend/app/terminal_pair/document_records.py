@@ -6,7 +6,7 @@ from typing import Any
 
 
 def _protected(record: dict[str, Any]) -> bool:
-    return bool(record.get("manual") or record.get("manualConfirmed"))
+    return bool(record.get("manual") or record.get("manualConfirmed") or record.get("initialLinked"))
 
 
 def _unmatched_record(item: dict[str, Any]) -> dict[str, Any]:
@@ -27,55 +27,61 @@ def reconcile_matches(
     items: list[dict[str, Any]],
     active_point_ids: set[str],
 ) -> bool:
-    """Rematch automatic rows, while retaining explicit business edits.
-
-    The seed is recalculated from the current point and OCR geometry on every
-    read. A new OCR box may displace an old match; the displaced source remains
-    visible as an unnumbered row. Manually edited rows keep their association
-    while their source is active. Deleting a source removes its line from the
-    table, including a manually edited business value linked to that source.
-    """
+    """Seed position pairs once, then keep terminal rows and saved associations stable."""
     previous = {record["id"]: record for record in records}
-    active_sources = {item["id"] for item in items}
-    locked_sources = {
-        record["sourceResultId"] for record in records
-        if _protected(record) and record.get("sourceResultId") in active_sources
-        and (record.get("terminalPointId") is None
-             or record["terminalPointId"] in active_point_ids)
-    }
+    sources = sorted((item for item in items if not (item.get("attributes", {}).get("terminal_point_id")
+                     and not item.get("display_text", "").strip())), key=lambda row: (
+                         (row["bbox"][1] + row["bbox"][3]) / 2,
+                         (row["bbox"][0] + row["bbox"][2]) / 2, str(row["id"])))
+    active_sources = {item["id"] for item in sources}
     represented: set[str] = set()
     updated: list[dict[str, Any]] = []
+    # Explicitly saved terminal links and independent manual OCR rows reserve
+    # their sources before the old, unpaired documents are migrated.
+    for old in records:
+        source_id = old.get("sourceResultId")
+        point_id = old.get("terminalPointId")
+        if _protected(old) and source_id in active_sources and (point_id is None or point_id in active_point_ids):
+            represented.add(source_id)
 
+    unpaired = []
     for proposed in seed:
         point_id = proposed.get("terminalPointId")
         if point_id is None:
             continue
         old = previous.get(proposed["id"])
-        source_removed = bool(old and old.get("sourceResultId")
-                              and old["sourceResultId"] not in active_sources)
-        if (old and _protected(old) and not source_removed) or (not old and _protected(proposed)):
-            record = (old or proposed).copy()
-            if record.get("sourceResultId") in active_sources:
-                represented.add(record["sourceResultId"])
+        if old and _protected(old):
+            record = old.copy()
+            if not old.get("manual") and not old.get("manualConfirmed"):
+                record["terminalNumber"] = proposed.get("terminalNumber", record.get("terminalNumber", ""))
+            if record.get("sourceResultId") and record["sourceResultId"] not in active_sources:
+                record.update(sourceResultId=None, sourceRevision=0, cable="", manualConfirmed=False)
+        elif not old:
+            record = proposed.copy()
+            if _protected(proposed) and not proposed.get("initialLinked"):
+                if record.get("sourceResultId") in active_sources:
+                    represented.add(record["sourceResultId"])
+            else:
+                record.update(sourceResultId=None, sourceRevision=0, cable="")
+                unpaired.append(record)
         else:
-            record = old.copy() if old else proposed.copy()
-            source_id = proposed.get("sourceResultId")
-            if source_id in locked_sources or source_id in represented:
-                source_id = None
-            record.update(
-                terminalNumber=proposed.get("terminalNumber", record.get("terminalNumber", "")),
-                sourceResultId=source_id,
-                sourceRevision=proposed.get("sourceRevision", 0) if source_id else 0,
-                cable=proposed.get("cable", "") if source_id else "",
-            )
-            if source_removed:
-                record.update(manual=False, manualConfirmed=False)
-            if source_id:
-                represented.add(source_id)
+            record = old.copy()
+            record["terminalNumber"] = proposed.get("terminalNumber", record.get("terminalNumber", ""))
+            unpaired.append(record)
         updated.append(record)
 
-    # Keep manually edited unnumbered rows and deleted-point records. Automatic
-    # unmatched rows are rebuilt below, so they can move into a terminal row.
+    available = (item for item in sources if item["id"] not in represented)
+    for record in unpaired:
+        source = next(available, None)
+        record.update(sourceResultId=source["id"] if source else None,
+                      sourceRevision=source.get("revision", 0) if source else 0,
+                      cable=source.get("display_text", "") if source else "",
+                      initialLinked=True)
+        if source:
+            represented.add(source["id"])
+
+    # Orphaned point records remain available for review. Unassigned OCR rows
+    # follow the fixed terminal rows in their own physical order.
     for old in records:
         point_id = old.get("terminalPointId")
         if point_id is not None and point_id not in active_point_ids:
@@ -83,17 +89,12 @@ def reconcile_matches(
         elif point_id is None and _protected(old) and (
             not old.get("sourceResultId") or old["sourceResultId"] in active_sources
         ):
-            updated.append(old.copy())
-            if old.get("sourceResultId") in active_sources:
-                represented.add(old["sourceResultId"])
+            if old.get("sourceResultId") not in {r.get("sourceResultId") for r in updated}:
+                updated.append(old.copy())
 
-    for item in sorted(items, key=lambda row: (
-        (row["bbox"][1] + row["bbox"][3]) / 2,
-        (row["bbox"][0] + row["bbox"][2]) / 2,
-        str(row["id"]),
-    )):
+    for item in sources:
         source_id = item["id"]
-        if source_id in represented or (item.get("attributes", {}).get("terminal_point_id") and not item.get("display_text", "").strip()):
+        if source_id in represented:
             continue
         old = previous.get("ocr:" + source_id)
         record = old.copy() if old and _protected(old) else _unmatched_record(item)

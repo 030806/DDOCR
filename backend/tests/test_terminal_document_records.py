@@ -1,5 +1,5 @@
 from app.terminal_pair.document_records import reconcile_matches
-from app.terminal_pair.match import terminal_pair_rows
+from app.services.terminal_document import seeded_records
 
 
 def point(identifier, y):
@@ -15,33 +15,6 @@ def item(identifier, y):
     }
 
 
-def seeded_records(page, items):
-    points = page["terminal_points"]
-    pairs = terminal_pair_rows(points, items)
-    matched = [source for number, source in pairs if number]
-    seed = []
-    for index, terminal in enumerate(points, 1):
-        source = matched[index - 1]
-        seed.append({
-            "id": "terminal:" + terminal["id"], "terminalPointId": terminal["id"],
-            "sourceResultId": source["id"] if source else None,
-            "terminalNumber": str(index), "cable": source["display_text"] if source else "",
-            "manualConfirmed": False, "tableNote": "", "manual": False,
-            "sourceRevision": source["revision"] if source else 0,
-        })
-    assigned = {source["id"] for source in matched if source}
-    for source in items:
-        if source["id"] in assigned:
-            continue
-        seed.append({
-            "id": "ocr:" + source["id"], "terminalPointId": None,
-            "sourceResultId": source["id"], "terminalNumber": "",
-            "cable": source["display_text"], "manualConfirmed": False,
-            "tableNote": "", "manual": False, "sourceRevision": source["revision"],
-        })
-    return seed
-
-
 def reconcile(records, points, items):
     seed = seeded_records({"terminal_points": points}, items)
     return reconcile_matches(records, seed, items, {p["id"] for p in points})
@@ -55,15 +28,15 @@ def by_source(records, identifier):
     return next(row for row in records if row["sourceResultId"] == identifier)
 
 
-def test_new_source_rematches_existing_automatic_terminal_row():
+def test_new_source_keeps_initial_terminal_pair_and_goes_to_tail():
     points = [point("a", 100), point("b", 200)]
     old = item("old", 112)
     records = seeded_records({"terminal_points": points}, [old])
     fresh = item("fresh", 99)
     assert reconcile(records, points, [old, fresh])
-    assert by_point(records, "a")["sourceResultId"] == "fresh"
+    assert by_point(records, "a")["sourceResultId"] == "old"
     assert by_point(records, "b")["sourceResultId"] is None
-    assert by_source(records, "old")["terminalPointId"] is None
+    assert by_source(records, "fresh")["terminalPointId"] is None
     assert not reconcile(records, points, [old, fresh])
 
 
@@ -89,13 +62,13 @@ def test_inserting_terminal_point_renumbers_unedited_rows():
             for key in ("top", "a", "b")] == [("1", None), ("2", "first"), ("3", "second")]
 
 
-def test_moving_detection_box_reassigns_automatic_rows():
+def test_moving_detection_box_does_not_reassign_initial_pair():
     points = [point("a", 100), point("b", 200)]
     old = item("moving", 100)
     records = seeded_records({"terminal_points": points}, [old])
-    assert reconcile(records, points, [item("moving", 200)])
-    assert by_point(records, "a")["sourceResultId"] is None
-    assert by_point(records, "b")["sourceResultId"] == "moving"
+    assert not reconcile(records, points, [item("moving", 200)])
+    assert by_point(records, "a")["sourceResultId"] == "moving"
+    assert by_point(records, "b")["sourceResultId"] is None
 
 
 def test_manual_business_row_keeps_value_and_source_is_not_duplicated():
@@ -128,18 +101,19 @@ def test_deleted_source_disappears_even_from_manually_edited_terminal_row():
     assert reconcile(records, points, [])
     assert by_point(records, "a")["sourceResultId"] is None
     assert by_point(records, "a")["cable"] == ""
-    assert by_point(records, "a")["manual"] is False
+    assert by_point(records, "a")["manual"] is True
     assert by_point(records, "a")["manualConfirmed"] is False
 
 
-def test_deleted_manual_source_allows_remaining_line_to_match_terminal():
+def test_deleted_manual_source_leaves_terminal_blank_and_remaining_line_unassigned():
     points = [point("a", 100)]
     old, remaining = item("old", 100), item("remaining", 110)
     records = seeded_records({"terminal_points": points}, [old, remaining])
     by_point(records, "a").update(cable="人工修改", manual=True)
     assert reconcile(records, points, [remaining])
-    assert by_point(records, "a")["sourceResultId"] == "remaining"
-    assert by_point(records, "a")["cable"] == "remaining"
+    assert by_point(records, "a")["sourceResultId"] is None
+    assert by_point(records, "a")["cable"] == ""
+    assert by_source(records, "remaining")["terminalPointId"] is None
     assert not any(row["sourceResultId"] == "old" for row in records)
 
 

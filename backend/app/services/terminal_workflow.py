@@ -89,7 +89,7 @@ class TerminalWorkflowService:
             raise HTTPException(422, '请选择已上传的图片')
         value = dict(id=uid(), owner_id=owner, file_id=file_id, revision=0,
                      confirmed=0, regions=[], side=None, points=[], model_points=[],
-                     start_point_id=None, ordering=None, bindings=[], job_id=None, illumination='none',
+                     start_point_id=None, end_point_id=None, ordering=None, bindings=[], job_id=None, illumination='none',
                      width=file['width_px'], height=file['height_px'])
         if persist: self.store.put(KIND, value['id'], value)
         return value
@@ -133,6 +133,10 @@ class TerminalWorkflowService:
                 if not all(isfinite(float(p[k])) for k in ('x','y')) or not (0 <= p['x'] <= value['width'] and 0 <= p['y'] <= value['height']): raise HTTPException(422, '孔位超出原图')
         elif step == 4:
             if value['start_point_id'] not in {p['id'] for p in value['points']}: raise HTTPException(422, '请选择起始端子')
+            if 'end_point_id' in value and value['end_point_id'] not in {p['id'] for p in value['points']}:
+                raise HTTPException(422, '请选择末尾端子')
+            if len(value['points']) > 1 and value.get('end_point_id') == value['start_point_id']:
+                raise HTTPException(422, '起始和末尾端子不能相同')
         elif step == 5:
             rule = value['ordering'] or {}
             if rule.get('naming') == 'prefix' and not rule.get('prefix'): raise HTTPException(422, '请输入命名前缀')
@@ -155,8 +159,8 @@ class TerminalWorkflowService:
                 if not any(r['bbox'][0] <= b['bbox'][0] and r['bbox'][1] <= b['bbox'][1] and r['bbox'][2] >= b['bbox'][2] and r['bbox'][3] >= b['bbox'][3] for r in value['regions']): raise HTTPException(422, '线号位置必须位于文字选区内')
 
     def ordered(self, value):
-        ids = [p['id'] for p in sorted(value['points'], key=lambda p:(p['y'],p['x'],p['id']))]
-        return ids[ids.index(value['start_point_id']):]
+        from app.terminal_pair.numbering import ordered_point_ids
+        return ordered_point_ids(value['points'], value.get('start_point_id'), value.get('end_point_id'))
 
     def patch(self, ident, owner, revision, changes):
         old = self.current(ident, owner, revision)
@@ -171,18 +175,20 @@ class TerminalWorkflowService:
                 continue
             if key == 'side' and old.get('task_side') and data != old['task_side']:
                 raise HTTPException(422, '识别方向必须与当前侧一致')
-            if key not in FIELDS: raise HTTPException(422, '不支持的配置')
-            step = FIELDS.index(key)+1
+            if key not in FIELDS and key != 'end_point_id': raise HTTPException(422, '不支持的配置')
+            step = 4 if key == 'end_point_id' else FIELDS.index(key)+1
             if old['confirmed'] < step-1: raise HTTPException(409, '请先完成前序步骤')
-            if value[key] != data:
+            if step == 4 and data is not None and data not in {p['id'] for p in value['points']}:
+                raise HTTPException(422, '请选择有效端子')
+            if value.get(key) != data:
                 value[key] = data
                 value['confirmed'] = min(value['confirmed'], step-1)
                 if step < 6:
                     value['positions_generated'] = False
                     value['candidates'] = []
                     value['bindings'] = []
-                if step != 6: self.validate(value, step)
-                else: self.validate_binding_edits(value)
+                if step not in (4, 6): self.validate(value, step)
+                elif step == 6: self.validate_binding_edits(value)
         return self.save(old, value)
 
     def validate_binding_edits(self, value):
@@ -214,6 +220,11 @@ class TerminalWorkflowService:
         old = self.current(ident, owner, revision)
         if step != old['confirmed']+1 or not 1 <= step <= 6: raise HTTPException(409, '不得跳过步骤')
         value = deepcopy(old)
+        if step == 4 and value.get('end_point_id') is None and value.get('start_point_id'):
+            from app.terminal_pair.numbering import ordered_point_ids
+            # Preserve older API clients that only send a start point.
+            ids = ordered_point_ids(value['points'], value['start_point_id'])
+            if ids: value['end_point_id'] = ids[-1]
         self.validate(value, step)
         value['confirmed'] = step
         return self.save(old, value)

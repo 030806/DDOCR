@@ -37,13 +37,25 @@ def terminal_label(rule, offset):
         text = chr(65+remainder) + text
     return rule.get('number_prefix', '') + (text.lower() if rule.get('letter_case','upper') == 'lower' else text)
 
+def ordered_point_ids(points, start_point_id, end_point_id=None):
+    """Number the inclusive physical span in the direction selected by the user."""
+    ids = [p['id'] for p in sorted(points, key=lambda p: (p['y'], p['x'], str(p['id'])))]
+    if start_point_id not in ids:
+        return []
+    # Old workflow snapshots had no end point and numbered to the bottom.
+    if end_point_id is None:
+        end_point_id = ids[-1]
+    if end_point_id not in ids:
+        return []
+    start, end = ids.index(start_point_id), ids.index(end_point_id)
+    return ids[start:end + 1] if start <= end else list(reversed(ids[end:start + 1]))
+
+
 def page_with_workflow_numbers(page, snapshot):
     """Recover confirmed labels for pages produced before labels were persisted."""
     if not snapshot or not snapshot.get('ordering') or not page.get('terminal_points'):
         return page
-    ordered = sorted(snapshot.get('points', []), key=lambda p:(p['y'],p['x'],p['id']))
-    ids = [p['id'] for p in ordered]
-    if snapshot.get('start_point_id') not in ids: return page
-    ids = ids[ids.index(snapshot['start_point_id']):]
+    ids = ordered_point_ids(snapshot.get('points', []), snapshot.get('start_point_id'), snapshot.get('end_point_id'))
+    if not ids: return page
     labels = {point_id: terminal_label(snapshot['ordering'], index) for index, point_id in enumerate(ids)}
     return {**page, 'terminal_points': [{**p, **({'terminal_number': labels[p['id']]} if p['id'] in labels else {})} for p in page['terminal_points']]}

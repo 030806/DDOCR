@@ -92,13 +92,6 @@ const listItems = computed(() => {
   const ids = new Set(props.regionListIds)
   return displayedItems.value.filter(item => ids.has(item.id))
 })
-const linkedTerminalLabel = (sourceId: string) => {
-  const pointId = Object.keys(props.terminalLinks || {}).find(id => props.terminalLinks?.[id] === sourceId)
-  if (!pointId) return ''
-  const points = [...(props.page.terminalPoints || [])].sort((a, b) => a.y - b.y || a.x - b.x)
-  const index = points.findIndex(point => point.id === pointId)
-  return props.terminalLinkLabels?.[pointId] || points[index]?.terminal_number || String(index + 1)
-}
 const hasTerminalResult = computed(() => Array.isArray(props.page.terminalPoints))
 const terminalRows = computed(() => independentTerminalTableRows(props.page.terminalPoints || [], props.page.items))
 const visibleSelectionIds = computed(() => viewMode.value === 'table' && hasTerminalResult.value
@@ -219,7 +212,6 @@ watch(() => props.page, () => { selectedIds.value = []; coordinateSorted.value =
           </p>
           <div class="result-meta">
             <span v-if="item.terminalNumber && !hasTerminalResult" class="result-terminal-number">端子号 {{ item.terminalNumber }}</span>
-            <span v-if="hasTerminalResult">{{ linkedTerminalLabel(item.id) ? `已关联 ${linkedTerminalLabel(item.id)} 号端子` : '待匹配' }}</span>
             <span v-if="item.editSource === 'manual'" class="manual-result-tag">人工新增</span>
             <span v-else-if="showConfidence" :class="item.score < lowConfidenceThreshold ? 'low-score' : ''"><i :style="{ background: scoreColor(item.score) }"></i>{{ (item.score * 100).toFixed(1) }}%</span>
             <span v-if="item.corrected" class="corrected-tag">已纠正</span>

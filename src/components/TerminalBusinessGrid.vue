@@ -8,6 +8,7 @@ import { syncTerminalDocument, type SourceUpdate, type SyncedSource } from '../a
 import { loadTerminalDocument, saveTerminalDocument, type TerminalDocument, type TerminalRecord, type SourceChange } from '../api/terminalDocument'
 import { selectedBusinessSourceIds } from '../businessDeletion'
 import { transferBusinessRows, type BusinessClipboard } from '../businessClipboard'
+import { businessTableRows } from '../businessTableRows'
 import { normalizeGridValue, type GridChange, type GridValues } from '../ocrGridEditing'
 import { sourceCorrectionUnavailable } from '../sourceCorrection'
 import OcrResultGrid from './OcrResultGrid.vue'
@@ -31,20 +32,7 @@ type Operation = { sync?:SyncHistory; before: TerminalRecord[]; after: TerminalR
 const undo = ref<Operation[]>([]), redo = ref<Operation[]>([])
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value))
 const sourceRecord = computed(() => doc.value.records.find(r => r.id === sourceRecordId.value))
-const tableRows = computed(() => {
-  const records = doc.value.records.filter(r => !r.orphaned)
-  const terminals = records.filter(r => r.terminalPointId)
-  const linked = terminals.filter(r => r.sourceResultId || r.cable)
-  const unlinked = terminals.filter(r => !r.sourceResultId && !r.cable)
-  const sources = records.filter(r => !r.terminalPointId && r.sourceResultId)
-  return [
-    ...linked.map(r => ({ id: r.id, terminal: r, cable: r, matched: !!r.sourceResultId })),
-    ...Array.from({ length: Math.max(unlinked.length, sources.length) }, (_, index) => ({
-      id: unlinked[index]?.id || sources[index]!.id,
-      terminal: unlinked[index], cable: sources[index] || (unlinked[index]?.cable ? unlinked[index] : undefined), matched: false,
-    })),
-  ]
-})
+const tableRows = computed(() => businessTableRows(doc.value.records, props.page.terminalPoints || [], props.page.items))
 const viewRow = (id: string) => tableRows.value.find(r => r.id === id)
 watch(() => [props.selectedTerminalId, props.selectedSourceId, doc.value.revision], () => {
   active.value = props.selectedTerminalId ? `terminal:${props.selectedTerminalId}` : tableRows.value.find(r => r.cable?.sourceResultId === props.selectedSourceId)?.id || ''
@@ -57,8 +45,7 @@ const values = (id: string): GridValues => {
 }
 const rows = computed(() => tableRows.value.map(r => ({ selectionId: r.id, terminalNumber: r.terminal?.terminalNumber || '',
   item: { id: r.id, text: r.cable?.cable || '', score: 1, bbox: [0, 0, 4, 4], comments: [] } as OcrItem,
-  hasTerminal: !!r.terminal, requiresTerminalReview: !r.terminal,
-  relationLabel: r.matched ? '已匹配' : r.terminal === r.cable ? '人工填写' : '仅并排' })))
+  hasTerminal: !!r.terminal, requiresTerminalReview: !r.terminal })))
 function deleteSelectedSources() {
   if (busy.value || failed.value || props.editingDisabled) return
   const ids = selectedBusinessSourceIds(doc.value.records, selected.value.map(id => viewRow(id)?.cable?.id || id), activeSourceIds.value)
@@ -267,7 +254,7 @@ defineExpose({ pending: () => busy.value || !loaded.value || failed.value, flush
 </script>
 <template>
   <div class="business-grid">
-    <p class="business-hint">已匹配记录排在前面；待匹配区域的端子号和线号仅分别按上下顺序并排展示，不表示关联。移动线号来源或使用图片连线可建立关联。</p>
+    <p class="business-hint">端子行按图片位置固定；初始线号按上下顺序对应。可在表格移动线号来源，或使用图片连线调整；未关联线号显示在表尾。</p>
     <div v-if="failed"><button v-if="failedInput" @click="retry">重试保留的整批输入</button><button @click="async () => { await load(); if (!failed) failedInput = undefined }">重新加载（放弃保留输入）</button><details v-if="failedInput"><summary>查看保留的输入</summary><pre>{{ failedInput.records }}</pre></details></div>
     <OcrResultGrid v-if="loaded" :rows="rows" :clipboard-scope="`${job}:${pageNo}`" :clipboard-source="clipboardSource" @transfer="transfer" :source-reason="sourceReason" :selected-id="active" :selected-ids="selected" :deletable-ids="deletableRows" :values="values" :statuses="{}" :revision="doc.revision" :can-undo="!!undo.length && !busy" :can-redo="!!redo.length && !busy" :editing-disabled="busy || failed || editingDisabled" @change="change" @select="select" @selection="selected = $event" @undo="history()" @redo="history(true)" @correct-source="correctSource" @delete-selected="deleteSelectedSources" />
     <p v-if="busy" role="status">正在加载或保存整批操作…</p>

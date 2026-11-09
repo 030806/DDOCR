@@ -9,9 +9,9 @@ import { BUSINESS_CLIPBOARD, type BusinessClipboard } from '../businessClipboard
 import { gridTerminalNumber } from '../terminalPairTable'
 import { gridFields, normalizeGridValue, parseGridClipboard, sequentialNumbers, type GridChange, type GridField, type GridValues } from '../ocrGridEditing'
 
-type GridRow = GridValues & { id: string; index: number; item?: OcrItem; status: string; selected: boolean; hasTerminal: boolean; requiresTerminalReview: boolean; sourceAction: string; relationLabel?: string }
+type GridRow = GridValues & { id: string; index: number; item?: OcrItem; status: string; selected: boolean; hasTerminal: boolean; requiresTerminalReview: boolean; sourceAction: string }
 const props = defineProps<{
-  rows: { selectionId: string; terminalNumber: string; item?: OcrItem; hasTerminal: boolean; requiresTerminalReview: boolean; relationLabel?: string }[]
+  rows: { selectionId: string; terminalNumber: string; item?: OcrItem; hasTerminal: boolean; requiresTerminalReview: boolean }[]
   terminalCount?: number
   modelTerminalCount?: number | null
   editingDisabled?: boolean
@@ -117,7 +117,7 @@ function rowData(): GridRow[] {
     // A saved number from an older positional match must not create an extra numbered row.
     terminalNumber: gridTerminalNumber(row, row.item ? props.values(row.item.id).terminalNumber : ''),
     id: row.selectionId, item: row.item, index: index + 1, status: props.statuses[row.item?.id || ''] || '已保存', selected: props.selectedIds.includes(row.selectionId),
-    hasTerminal: row.hasTerminal, requiresTerminalReview: row.requiresTerminalReview, relationLabel: row.relationLabel,
+    hasTerminal: row.hasTerminal, requiresTerminalReview: row.requiresTerminalReview,
     sourceAction: props.sourceReason ? props.sourceReason(row.item) : sourceCorrectionUnavailable(row.item),
   }))
 }
@@ -281,7 +281,7 @@ function refresh() {
       const existing = table.getRow(row.id)
       if (existing) {
         const patch: Partial<GridRow> = {}
-        for (const key of ['terminalNumber', 'cable', 'manualConfirmed', 'tableNote', 'status', 'selected', 'index', 'hasTerminal', 'requiresTerminalReview', 'sourceAction', 'relationLabel'] as const) if (existing.getData()[key] !== row[key]) Object.assign(patch, { [key]: row[key] })
+        for (const key of ['terminalNumber', 'cable', 'manualConfirmed', 'tableNote', 'status', 'selected', 'index', 'hasTerminal', 'requiresTerminalReview', 'sourceAction'] as const) if (existing.getData()[key] !== row[key]) Object.assign(patch, { [key]: row[key] })
         if (Object.keys(patch).length) void existing.update(patch)
         if ('requiresTerminalReview' in patch) {
           const cell = existing.getCell('terminalNumber')
@@ -315,7 +315,6 @@ onMounted(() => {
         emit('selection', selected)
       } },
       { title: '序号', field: 'index', width: 62, headerSort: false },
-      ...(props.rows.some(row => row.relationLabel) ? [{ title: '关系', field: 'relationLabel', width: 88, headerSort: false } as ColumnDefinition] : []),
       { ...textColumn('端子号', 'terminalNumber', 110), formatter(cell) { const text = document.createElement('span'); text.textContent = String(cell.getValue() || ''); return text }, cellClick(_event, cell) { if ((cell.getRow().getData() as GridRow).requiresTerminalReview) feedback.value = '该线号尚未关联端子；可在图片上连线匹配，或在表格中移动线号来源' } }, { ...textColumn('线缆编号', 'cable', 170), formatter(cell) {
         const content = document.createElement('span'); content.textContent = String(cell.getValue() ?? '')
         const item = (cell.getRow().getData() as GridRow).item

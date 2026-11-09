@@ -1,5 +1,5 @@
 import { apiClient } from './client'
-export type TerminalRecord = { id: string; terminalPointId: string | null; sourceResultId: string | null; terminalNumber: string; cable: string; manualConfirmed: boolean; tableNote: string; manual: boolean; sourceRevision: number; sourceChanged?: boolean; sourceUnavailable?: boolean; orphaned?: boolean; sourceText?: string; currentSourceRevision?: number }
+export type TerminalRecord = { id: string; terminalPointId: string | null; sourceResultId: string | null; terminalNumber: string; cable: string; manualConfirmed: boolean; tableNote: string; manual: boolean; initialLinked?: boolean; sourceRevision: number; sourceChanged?: boolean; sourceUnavailable?: boolean; orphaned?: boolean; sourceText?: string; currentSourceRevision?: number }
 export type TerminalDocument = { revision: number; records: TerminalRecord[] }
 export type SourceChange = { result_id: string; base_revision: number; text: string }
 export async function loadTerminalDocument(job: string, page: number): Promise<TerminalDocument> {
