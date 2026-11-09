@@ -1,6 +1,6 @@
 import type { OcrItem } from './types/ocr'
 export function sourceCorrectionUnavailable(item?: OcrItem): string {
-  if (!item || item.id.startsWith('terminal:') || item.terminalPointId) return '此行暂无关联识别框'
+  if (!item || item.id.startsWith('terminal:') || (item.terminalPointId && !(item.corrected ?? item.text).trim())) return '此行暂无关联识别框'
   if (item.reviewStatus === 'deleted' || item.reviewStatus === 'false_positive') return '来源已删除或标记误检，请先核对并恢复来源'
   return ''
 }

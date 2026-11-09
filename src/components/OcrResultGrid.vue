@@ -9,9 +9,9 @@ import { BUSINESS_CLIPBOARD, type BusinessClipboard } from '../businessClipboard
 import { gridTerminalNumber } from '../terminalPairTable'
 import { gridFields, normalizeGridValue, parseGridClipboard, sequentialNumbers, type GridChange, type GridField, type GridValues } from '../ocrGridEditing'
 
-type GridRow = GridValues & { id: string; index: number; item?: OcrItem; status: string; selected: boolean; hasTerminal: boolean; requiresTerminalReview: boolean; sourceAction: string }
+type GridRow = GridValues & { id: string; index: number; item?: OcrItem; status: string; selected: boolean; hasTerminal: boolean; requiresTerminalReview: boolean; sourceAction: string; relationLabel?: string }
 const props = defineProps<{
-  rows: { selectionId: string; terminalNumber: string; item?: OcrItem; hasTerminal: boolean; requiresTerminalReview: boolean }[]
+  rows: { selectionId: string; terminalNumber: string; item?: OcrItem; hasTerminal: boolean; requiresTerminalReview: boolean; relationLabel?: string }[]
   terminalCount?: number
   modelTerminalCount?: number | null
   editingDisabled?: boolean
@@ -109,7 +109,7 @@ const numberPlan = computed(() => {
 const preview = computed(() => numberPlan.value.changes)
 const previewRows = computed(() => numberTargets.value.map(row => {
   const change = preview.value.find(change => change.id === row.id)
-  return { ...row, after: change ? String(change.value) : row.before, action: row.requiresTerminalReview ? '跳过：待核对端子，请先核对或补点' : !row.id ? '跳过：只读行' : numberPlan.value.error ? '参数无效' : !change ? '跳过：已有编号' : change.value === row.before ? '保持原值' : '填写编号' }
+  return { ...row, after: change ? String(change.value) : row.before, action: row.requiresTerminalReview ? '跳过：该行无端子点' : !row.id ? '跳过：只读行' : numberPlan.value.error ? '参数无效' : !change ? '跳过：已有编号' : change.value === row.before ? '保持原值' : '填写编号' }
 }))
 function rowData(): GridRow[] {
   return props.rows.map((row, index) => ({
@@ -117,7 +117,7 @@ function rowData(): GridRow[] {
     // A saved number from an older positional match must not create an extra numbered row.
     terminalNumber: gridTerminalNumber(row, row.item ? props.values(row.item.id).terminalNumber : ''),
     id: row.selectionId, item: row.item, index: index + 1, status: props.statuses[row.item?.id || ''] || '已保存', selected: props.selectedIds.includes(row.selectionId),
-    hasTerminal: row.hasTerminal, requiresTerminalReview: row.requiresTerminalReview,
+    hasTerminal: row.hasTerminal, requiresTerminalReview: row.requiresTerminalReview, relationLabel: row.relationLabel,
     sourceAction: props.sourceReason ? props.sourceReason(row.item) : sourceCorrectionUnavailable(row.item),
   }))
 }
@@ -177,7 +177,7 @@ function copy(event: ClipboardEvent, cut = false) {
   if (props.clipboardScope && props.clipboardSource && cells.every(row => row.length === 1 && row[0]!.getField() === 'cable')) {
     const payload: BusinessClipboard = { scope: props.clipboardScope, cut, rows: cells.map(row => props.clipboardSource!(String(row[0]!.getRow().getIndex()))) }
     event.clipboardData?.setData(BUSINESS_CLIPBOARD, JSON.stringify(payload))
-    feedback.value = cut ? '已标记剪切；粘贴成功后清空源编号和来源关联' : '已复制编号及识别来源'
+    feedback.value = cut ? '已标记剪切；粘贴成功后清空源编号和来源关联' : '已复制编号文字，不复制关联'
   }
 }
 function cut(event: ClipboardEvent) {
@@ -281,7 +281,7 @@ function refresh() {
       const existing = table.getRow(row.id)
       if (existing) {
         const patch: Partial<GridRow> = {}
-        for (const key of ['terminalNumber', 'cable', 'manualConfirmed', 'tableNote', 'status', 'selected', 'index', 'hasTerminal', 'requiresTerminalReview', 'sourceAction'] as const) if (existing.getData()[key] !== row[key]) Object.assign(patch, { [key]: row[key] })
+        for (const key of ['terminalNumber', 'cable', 'manualConfirmed', 'tableNote', 'status', 'selected', 'index', 'hasTerminal', 'requiresTerminalReview', 'sourceAction', 'relationLabel'] as const) if (existing.getData()[key] !== row[key]) Object.assign(patch, { [key]: row[key] })
         if (Object.keys(patch).length) void existing.update(patch)
         if ('requiresTerminalReview' in patch) {
           const cell = existing.getCell('terminalNumber')
@@ -315,7 +315,8 @@ onMounted(() => {
         emit('selection', selected)
       } },
       { title: '序号', field: 'index', width: 62, headerSort: false },
-      { ...textColumn('端子号', 'terminalNumber', 110), formatter(cell) { const text = document.createElement('span'); text.textContent = String(cell.getValue() || ''); return text }, cellClick(_event, cell) { if ((cell.getRow().getData() as GridRow).requiresTerminalReview) feedback.value = '该线号尚无关联端子；确有漏检时，请先补充并保存端子点' } }, { ...textColumn('线缆编号', 'cable', 170), formatter(cell) {
+      ...(props.rows.some(row => row.relationLabel) ? [{ title: '关系', field: 'relationLabel', width: 88, headerSort: false } as ColumnDefinition] : []),
+      { ...textColumn('端子号', 'terminalNumber', 110), formatter(cell) { const text = document.createElement('span'); text.textContent = String(cell.getValue() || ''); return text }, cellClick(_event, cell) { if ((cell.getRow().getData() as GridRow).requiresTerminalReview) feedback.value = '该线号尚未关联端子；可在图片上连线匹配，或在表格中移动线号来源' } }, { ...textColumn('线缆编号', 'cable', 170), formatter(cell) {
         const content = document.createElement('span'); content.textContent = String(cell.getValue() ?? '')
         const item = (cell.getRow().getData() as GridRow).item
         if (item?.needsRawTextReview && !item.corrected) { const badge = document.createElement('small'); badge.className = 'ocr-raw-review'; badge.textContent = ' 待核对原始标记'; content.appendChild(badge) }
@@ -380,7 +381,7 @@ onBeforeUnmount(() => { built = false; host.value?.removeEventListener('paste', 
     <details class="ocr-grid-help">
       <summary>操作帮助</summary>
       <p>双击编辑，点击文字定位光标；编辑中可用方向键移动、Ctrl+A 全选；Tab 左右、Enter 上下；拖选区域后 Ctrl+C/V；Ctrl+D 向下填充。</p>
-      <p v-if="clipboardScope">选择线缆编号单列后 Ctrl+X 剪切，Ctrl+V 粘贴；编号和识别来源一起移动，粘贴成功才清空源位置。Ctrl+C 复制及向下填充也携带来源。端子号和端子点不移动。</p>
+      <p v-if="clipboardScope">选择线缆编号单列后 Ctrl+X 剪切、Ctrl+V 粘贴，可将编号及来源一起移动；普通复制和向下填充只复制文字，不建立重复关联。端子号和端子点不移动。</p>
       <p>选择列从未勾选行拖选可勾选，从已勾选行拖选可取消，支持 Shift 连选。</p>
       <p>人工确认列支持纵向拖选：从未确认行开始批量确认，从已确认行开始批量取消；只读行跳过，整批操作可撤销。</p>
     </details>
@@ -394,7 +395,7 @@ onBeforeUnmount(() => { built = false; host.value?.removeEventListener('paste', 
       </template>
     </div>
     <a-modal v-model:open="numberDialog" title="顺序编号" ok-text="应用编号" cancel-text="取消" :ok-button-props="{ disabled: !preview.length || !!numberPlan.error }" @ok="numberRows">
-      <p v-if="terminalCount !== undefined" class="ocr-number-count">模型识别：{{ modelTerminalCount ?? '未知' }} 个端子；当前端子数量：{{ terminalCount }} 个（含已保存人工修正）。本次仅修改已有行的编号文字，不新增端子。按坐标排列仅为位置配对，请核对原图对应关系。</p>
+      <p v-if="terminalCount !== undefined" class="ocr-number-count">模型识别：{{ modelTerminalCount ?? '未知' }} 个端子；当前端子数量：{{ terminalCount }} 个（含已保存人工修正）。本次仅修改已有行的编号文字，不新增端子。按坐标并排展示不代表已建立匹配。</p>
       <p class="ocr-number-scope">目标范围：{{ numberSource === 'range' ? '端子号单元格选区' : '勾选行' }}，共 {{ numberTargets.length }} 行（表格行号：{{ numberTargets.map(row => row.index).join('、') }}）。</p>
       <p>端子号单元格选区优先于勾选行；仅修改此处预览的行。</p>
       <div class="ocr-number-form">

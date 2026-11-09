@@ -58,7 +58,8 @@ def run_pipeline(
             roi_errors[roi.roi_id] = f"{type(exc).__name__}: {exc}"
 
     active_rules = rules or TerminalCodeRules.from_config(config)
-    postprocessed = postprocess_detections(detections, active_rules, config)
+    full_image = len(rois) == 1 and rois[0].bbox == (0, 0, image.width, image.height)
+    postprocessed = postprocess_detections(detections, active_rules, config, full_image=full_image)
     return PipelineResult(
         detections=postprocessed.detections,
         roi_errors=roi_errors,

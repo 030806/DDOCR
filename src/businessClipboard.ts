@@ -14,7 +14,8 @@ export function transferBusinessRows(records: TerminalRecord[], payload: Busines
   targets.forEach((id, index) => {
     const target = next.find(r => r.id === id), source = payload.rows[index]!
     if (!target) throw new Error('目标行不存在')
-    Object.assign(target, { cable: source.cable, sourceResultId: source.sourceResultId, sourceRevision: source.sourceRevision, manualConfirmed: false, manual: true })
+    Object.assign(target, { cable: source.cable, sourceResultId: payload.cut ? source.sourceResultId : null,
+      sourceRevision: payload.cut ? source.sourceRevision : 0, manualConfirmed: false, manual: true })
   })
   return next
 }

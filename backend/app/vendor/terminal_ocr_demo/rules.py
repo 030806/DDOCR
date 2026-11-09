@@ -12,7 +12,7 @@ from .config import DemoConfig
 from .models import CodeAssessment
 
 
-ALLOWED_CHARACTERS = frozenset("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-/")
+ALLOWED_CHARACTERS = frozenset("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-/")
 _CONFUSION_GROUPS = ("8B", "0OD", "1IJ", "5S", "2Z")
 MASK_PLACEHOLDER = "#"
 _FORMAT_PREFIXES = "HJXKUW"
@@ -24,7 +24,7 @@ def normalize_terminal_text(raw_text: str) -> str:
     """Normalize presentation noise without changing recognized letters/digits."""
 
     compact = "".join(character for character in raw_text if not character.isspace())
-    return compact.upper()
+    return compact
 
 
 def contains_only_allowed_characters(raw_text: str) -> bool:
@@ -110,8 +110,8 @@ class TerminalCodeRules:
         return cls(
             library_codes=frozenset(statuses),
             library_statuses=statuses,
-            base_pattern=re.compile(base_pattern),
-            extended_pattern=re.compile(extended_pattern),
+            base_pattern=re.compile(base_pattern, re.IGNORECASE),
+            extended_pattern=re.compile(extended_pattern, re.IGNORECASE),
         )
 
     @classmethod
@@ -146,14 +146,16 @@ class TerminalCodeRules:
                 match_method="masked_wildcard", edit_count=masked.count(MASK_PLACEHOLDER),
                 review_status="unresolved",
             )
-        if normalized in self.library_codes:
+        case_hits = [code for code in self.library_codes if code.casefold() == normalized.casefold()]
+        library_hit = normalized if normalized in self.library_codes else case_hits[0] if len(case_hits) == 1 else None
+        if library_hit is not None:
             return self._assessment(
                 raw_text,
                 normalized,
                 output_text=normalized,
                 recommended_code=normalized,
                 candidate_codes=(normalized,),
-                rule_status=self.library_statuses.get(normalized, "library"),
+                rule_status=self.library_statuses.get(library_hit, "library"),
                 match_method="exact_library",
                 edit_count=0,
                 review_status="confirmed",
@@ -183,7 +185,7 @@ class TerminalCodeRules:
                 review_status="review_required",
             )
 
-        candidates = () if any(character in normalized for character in "-/") else self._correction_candidates(normalized)
+        candidates = () if any(character in normalized for character in "-/") or any(c.islower() for c in normalized) else self._correction_candidates(normalized)
         if len(candidates) == 1:
             candidate = candidates[0]
             return self._assessment(

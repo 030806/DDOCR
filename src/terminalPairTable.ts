@@ -15,6 +15,19 @@ export function orderedTerminalPoints(points: TerminalPoint[]): TerminalPoint[] 
   return [...points].sort((a, b) => a.y - b.y || a.x - b.x || a.id.localeCompare(b.id))
 }
 
+export function independentTerminalTableRows(points: TerminalPoint[], items: OcrItem[]): TerminalTableRow[] {
+  const terminals = orderedTerminalPoints(points)
+  const lines = exportableOcrItems(items).filter(item => !item.terminalPointId || Boolean((item.corrected ?? item.text).trim())).sort((a, b) =>
+    lineCenter(a).y - lineCenter(b).y || lineCenter(a).x - lineCenter(b).x || a.id.localeCompare(b.id))
+  return Array.from({ length: Math.max(terminals.length, lines.length) }, (_, index) => ({
+    selectionId: terminals[index] ? `terminal:${terminals[index]!.id}` : lines[index]!.id,
+    index: index + 1,
+    terminalNumber: terminals[index]?.terminal_number?.trim() || (terminals[index] ? String(index + 1) : ''),
+    item: lines[index], hasTerminal: !!terminals[index], hasOcrResult: !!lines[index],
+    requiresTerminalReview: !terminals[index] && !!lines[index],
+  }))
+}
+
 export function gridTerminalNumber(row: Pick<TerminalTableRow, 'hasTerminal' | 'terminalNumber'> & { item?: OcrItem }, saved: string): string {
   if (!row.hasTerminal) return ''
   // The OCR row's untouched legacy sequence is not a user edit. Local edits

@@ -17,7 +17,6 @@ from app.ocr.adapter import OcrAdapter
 from app.ocr.contracts import OcrAdapterProtocol
 from app.ocr.engine import TerminalOcrEngine
 from app.terminal_pair.client import TerminalPairClient
-from app.terminal_pair.match import terminal_pair_rows
 from app.repositories.auth import PasswordResetRepository, SessionRepository, TenantRepository, UserRepository
 from app.repositories.correction_comment import CommentRepository, CorrectionRepository
 from app.repositories.file_job import FileRepository, OCRJobRepository
@@ -1005,12 +1004,9 @@ class MockOcrService:
                     for record in business:
                         pair_sheet.append([page["page_no"], record["terminalNumber"], record["cable"]])
                     continue
-                for terminal_number, item in terminal_pair_rows(page["terminal_points"], line_results):
-                    pair_sheet.append([
-                        page["page_no"],
-                        terminal_number,
-                        item["display_text"] if item is not None else "",
-                    ])
+                from app.services.terminal_document import seeded_records
+                for record in seeded_records(page, line_results):
+                    pair_sheet.append([page["page_no"], record["terminalNumber"], record["cable"]])
         workbook.save(export_path)
 
         export = {

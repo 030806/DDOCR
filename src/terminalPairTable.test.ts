@@ -1,11 +1,27 @@
 import { describe, expect, it } from 'vitest'
-import { gridTerminalNumber, orderedTerminalPoints, terminalTableRows } from './terminalPairTable'
+import { gridTerminalNumber, independentTerminalTableRows, orderedTerminalPoints, terminalTableRows } from './terminalPairTable'
 import type { OcrItem, TerminalPoint } from './types/ocr'
 
 const line = (id: string, y: number, reviewStatus?: OcrItem['reviewStatus']): OcrItem => ({
   id, text: id, score: 0.95, bbox: [10, y, 40, y + 10], comments: [], reviewStatus,
 })
 const point = (id: string, y: number): TerminalPoint => ({ id, x: 20, y, source: 'model' })
+
+it('shows terminal and OCR columns independently without positional matching', () => {
+  const rows = independentTerminalTableRows([point('second', 200), point('first', 100)], [line('low', 300), line('high', 50)])
+  expect(rows.map(row => [row.selectionId, row.terminalNumber, row.item?.id])).toEqual([
+    ['terminal:first', '1', 'high'], ['terminal:second', '2', 'low'],
+  ])
+})
+
+it('keeps a real OCR line carrying workflow point provenance available for manual matching', () => {
+  const rows = independentTerminalTableRows([point('p', 100)], [
+    { ...line('wire', 100), terminalPointId: 'p' },
+    { ...line('marker', 100), text: '', terminalPointId: 'p' },
+  ])
+  expect(rows).toHaveLength(1)
+  expect(rows[0]!.item?.id).toBe('wire')
+})
 
 describe('terminal-pair table rows', () => {
   it('marks surplus OCR lines independently of displayed numbers and blank terminal rows', () => {

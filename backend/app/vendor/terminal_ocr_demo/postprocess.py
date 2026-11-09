@@ -239,7 +239,7 @@ def _is_spatial_fragment(
     )
 
 
-def _horizontal_fragment_pair(left: OCRDetection, right: OCRDetection) -> bool:
+def _horizontal_fragment_pair(left: OCRDetection, right: OCRDetection, *, full_image: bool = False) -> bool:
     """Accept a right-hand center inside the left quadrilateral's text band."""
     if left.roi_id != right.roi_id:
         return False
@@ -249,6 +249,10 @@ def _horizontal_fragment_pair(left: OCRDetection, right: OCRDetection) -> bool:
     if lx2 <= lx1 or ly2 <= ly1 or rx2 <= rx1 or ry2 <= ry1:
         return False
     if center_x <= (lx1 + lx2) / 2:
+        return False
+    height = max(ly2 - ly1, ry2 - ry1)
+    max_gap = max(12.0, height * (1.5 if full_image else 4.0))
+    if rx1 - lx2 > max_gap:
         return False
     quad = _horizontal_quad(left)
     if quad is not None:
@@ -291,7 +295,7 @@ def _merged_polygon(left: OCRDetection, right: OCRDetection) -> list[list[float]
 
 
 def _merge_horizontal_fragments(
-    detections: list[OCRDetection], rules: TerminalCodeRules,
+    detections: list[OCRDetection], rules: TerminalCodeRules, *, full_image: bool = False,
 ) -> tuple[list[OCRDetection], list[dict[str, object]]]:
     remaining = detections[:]
     audit: list[dict[str, object]] = []
@@ -301,7 +305,7 @@ def _merge_horizontal_fragments(
              (_bounds(left)[0] + _bounds(left)[2]) / 2, i, j)
             for i, left in enumerate(remaining)
             for j, right in enumerate(remaining)
-            if i != j and _horizontal_fragment_pair(left, right)
+            if i != j and _horizontal_fragment_pair(left, right, full_image=full_image)
         ]
         if not candidates:
             return remaining, audit
@@ -329,6 +333,7 @@ def postprocess_detections(
     detections: list[OCRDetection],
     rules: TerminalCodeRules,
     config: DemoConfig,
+    *, full_image: bool = False,
 ) -> PostprocessResult:
     """Assess, cluster, and reduce raw OCR detections without losing audit data."""
 
@@ -402,7 +407,7 @@ def postprocess_detections(
                     _audit_record(member, cluster.cluster_id, disposition)
                 )
 
-    final_detections, fragment_audit = _merge_horizontal_fragments(final_detections, rules)
+    final_detections, fragment_audit = _merge_horizontal_fragments(final_detections, rules, full_image=full_image)
     audit_records.extend(fragment_audit)
     final_detections.sort(
         key=lambda item: (item.roi_id, _bounds(item)[1], _bounds(item)[0])

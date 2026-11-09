@@ -12,7 +12,7 @@ def _protected(record: dict[str, Any]) -> bool:
 def _unmatched_record(item: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": "ocr:" + item["id"], "terminalPointId": None,
-        "sourceResultId": item["id"], "terminalNumber": item.get("terminal_number") or "",
+        "sourceResultId": item["id"], "terminalNumber": "",
         "cable": item.get("display_text", ""),
         "manualConfirmed": bool(item.get("manual_confirmed")),
         "tableNote": item.get("table_note", ""),
@@ -93,7 +93,7 @@ def reconcile_matches(
         str(row["id"]),
     )):
         source_id = item["id"]
-        if source_id in represented or item.get("attributes", {}).get("terminal_point_id"):
+        if source_id in represented or (item.get("attributes", {}).get("terminal_point_id") and not item.get("display_text", "").strip()):
             continue
         old = previous.get("ocr:" + source_id)
         record = old.copy() if old and _protected(old) else _unmatched_record(item)

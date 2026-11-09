@@ -12,6 +12,7 @@ import { createSplitLayout } from '../splitLayout'
 import { completeDatasetReview, getDatasetStatuses, type DatasetStatus } from '../api/dataset'
 import { exportTerminalBusiness, exportOcrResults, type ExportMode } from '../exportResults'
 import { apiClient } from '../api/client'
+import { loadTerminalDocument, saveTerminalLinks } from '../api/terminalDocument'
 import TerminalResultControls from '../components/TerminalResultControls.vue'
 import UploadPanel from '../components/UploadPanel.vue'
 import DocumentViewer from '../components/DocumentViewer.vue'
@@ -33,6 +34,7 @@ import { copyRegions } from '../regionSelection'
 import { orderedTerminalPoints } from '../terminalPairTable'
 import { saveWithTerminalPointConfirmation } from '../terminalPointEditing'
 import { applyCorrectionToItems } from '../correctionState'
+import { connectTerminalLink } from '../manualTerminalLinks'
 
 const emit = defineEmits<{ completed: [jobId: string, pageCount: number] }>()
 
@@ -72,6 +74,7 @@ const resultPanel = ref<{
   hasPendingEdits: () => boolean
   flushPendingEdits: () => Promise<boolean>
   syncCorrection: (resultId: string, correctedText: string) => void
+  refreshBusinessDocument: () => Promise<void> | undefined
 }>()
 const pages = ref<OcrPage[]>(initialContent.pages)
 const selectedFile = ref<File>()
@@ -89,6 +92,17 @@ const terminalEditMode = ref(false)
 const terminalDraftPoints = ref<TerminalPoint[]>([])
 const terminalDirty = ref(false)
 const terminalSaving = ref(false)
+const matchingMode = ref(false)
+const linkSaving = ref(false)
+const showLinks = ref(false)
+const savedLinks = ref<Record<string, string>>({})
+const savedLinkLabels = ref<Record<string, string>>({})
+const draftLinks = ref<Record<string, string>>({})
+const linkRevision = ref(0)
+const linkHistory = ref<Record<string, string>[]>([])
+const matchStart = ref<{ kind: 'terminal' | 'source'; id: string } | null>(null)
+const visibleLinks = computed(() => matchingMode.value ? draftLinks.value : savedLinks.value)
+const linkDirty = computed(() => JSON.stringify(Object.entries(draftLinks.value).sort()) !== JSON.stringify(Object.entries(savedLinks.value).sort()))
 const selectedTerminalId = ref('')
 const datasetReviewed = computed(() => !bboxDirty.value && !terminalDirty.value && !pendingGeometrySnapshot.value && datasetStatus.value && datasetStatus.value.state !== 'unreviewed')
 const pendingGeometrySnapshot = ref<EditableOcrItem[]>()
@@ -173,13 +187,13 @@ onBeforeUnmount(() => {
 })
 
 function handleBeforeUnload(event: BeforeUnloadEvent) {
-  if (!bboxDirty.value && !pendingGeometrySnapshot.value && !terminalDirty.value && !resultPanel.value?.hasPendingEdits()) return
+  if (!bboxDirty.value && !pendingGeometrySnapshot.value && !terminalDirty.value && !linkDirty.value && !resultPanel.value?.hasPendingEdits()) return
   event.preventDefault()
   event.returnValue = ''
 }
 
 async function confirmBboxNavigation(next: NavigationGuardNext) {
-  if (datasetReviewSaving.value || bboxSaving.value || terminalSaving.value) {
+  if (datasetReviewSaving.value || bboxSaving.value || terminalSaving.value || linkSaving.value) {
     message.info('正在保存，请完成后再切换任务')
     next(false)
     return
@@ -198,6 +212,12 @@ async function confirmBboxNavigation(next: NavigationGuardNext) {
       okText: '放弃并离开', cancelText: '取消',
       onOk: () => { cancelTerminalEdit(); next() }, onCancel: () => next(false),
     })
+    return
+  }
+  if (matchingMode.value && linkDirty.value) {
+    Modal.confirm({ title: '存在未保存的连线匹配', content: '离开后本次匹配修改将丢失。',
+      okText: '放弃并离开', cancelText: '继续匹配',
+      onOk: () => { matchingMode.value = false; next() }, onCancel: () => next(false) })
     return
   }
   if (!bboxEditMode.value || (!bboxDirty.value && !pendingGeometrySnapshot.value)) { next(); return }
@@ -220,7 +240,7 @@ onBeforeRouteUpdate((_to, _from, next) => confirmBboxNavigation(next))
 onBeforeRouteLeave((_to, _from, next) => confirmBboxNavigation(next))
 
 async function prepareSideChange() {
-  if (datasetReviewSaving.value || bboxSaving.value || terminalSaving.value || reviewSaving.value || resultMutationSaving.value || correctionOpen.value || manualTextOpen.value) {
+  if (datasetReviewSaving.value || bboxSaving.value || terminalSaving.value || linkSaving.value || reviewSaving.value || resultMutationSaving.value || correctionOpen.value || manualTextOpen.value) {
     message.info('请先完成当前编辑或保存'); return false
   }
   if (resultPanel.value && !await resultPanel.value.flushPendingEdits()) {
@@ -228,6 +248,7 @@ async function prepareSideChange() {
   }
   if (bboxDirty.value || pendingGeometrySnapshot.value) { message.warning('请先保存检测框修改'); return false }
   if (terminalDirty.value) { message.warning('请先保存端子点修改'); return false }
+  if (matchingMode.value && linkDirty.value) { message.warning('请先保存或取消连线匹配'); return false }
   return true
 }
 defineExpose({ prepareSideChange })
@@ -331,6 +352,75 @@ watch([taskLoading, page], async ([loading, activePage]) => {
   await nextTick()
   observeWorkspace()
 })
+watch([() => route.params.taskId, currentPage, () => page.value?.items.length], async () => {
+  matchingMode.value = false
+  savedLinks.value = {}; savedLinkLabels.value = {}; draftLinks.value = {}; showLinks.value = false
+  if (!page.value?.terminalPoints || !route.params.taskId) return
+  try {
+    const taskId = String(route.params.taskId), pageNo = currentPage.value
+    const doc = await loadTerminalDocument(taskId, pageNo)
+    if (taskId !== String(route.params.taskId) || pageNo !== currentPage.value) return
+    linkRevision.value = doc.revision
+    savedLinks.value = Object.fromEntries(doc.records.filter(r => !r.orphaned && r.terminalPointId && r.sourceResultId).map(r => [r.terminalPointId!, r.sourceResultId!]))
+    savedLinkLabels.value = Object.fromEntries(doc.records.filter(r => !r.orphaned && r.terminalPointId).map(r => [r.terminalPointId!, r.terminalNumber]))
+  } catch { message.warning('匹配关系加载失败，请刷新页面重试') }
+}, { immediate: true })
+
+async function refreshLinks() {
+  if (!page.value?.terminalPoints || matchingMode.value) return
+  const doc = await loadTerminalDocument(String(route.params.taskId), currentPage.value)
+  linkRevision.value = doc.revision
+  savedLinks.value = Object.fromEntries(doc.records.filter(r => !r.orphaned && r.terminalPointId && r.sourceResultId).map(r => [r.terminalPointId!, r.sourceResultId!]))
+  savedLinkLabels.value = Object.fromEntries(doc.records.filter(r => !r.orphaned && r.terminalPointId).map(r => [r.terminalPointId!, r.terminalNumber]))
+}
+async function toggleMatching() {
+  if (matchingMode.value) { cancelMatching(); return }
+  if (bboxEditMode.value || terminalEditMode.value || resultPanel.value?.hasPendingEdits()) { message.warning('请先完成当前编辑'); return }
+  if (activeRegionId.value) activeRegionId.value = ''
+  try { await refreshLinks() } catch { message.error('匹配关系加载失败'); return }
+  draftLinks.value = { ...savedLinks.value }; linkHistory.value = []; matchStart.value = null; matchingMode.value = true
+}
+function cancelMatching() {
+  if (linkDirty.value) {
+    Modal.confirm({ title: '放弃未保存的匹配修改？', okText: '放弃修改', cancelText: '继续匹配', onOk: () => {
+      matchingMode.value = false; draftLinks.value = { ...savedLinks.value }; matchStart.value = null
+    } })
+  } else { matchingMode.value = false; matchStart.value = null }
+}
+function linkClick(kind: 'terminal' | 'source', id: string) {
+  if (!matchingMode.value) return
+  if (kind === 'terminal') { selectedTerminalId.value = id; selectedId.value = '' }
+  else { selectedId.value = id; selectedTerminalId.value = '' }
+  const start = matchStart.value
+  if (!start || start.kind === kind) { matchStart.value = { kind, id }; return }
+  const pointId = kind === 'terminal' ? id : start.id
+  const sourceId = kind === 'source' ? id : start.id
+  linkHistory.value.push({ ...draftLinks.value })
+  draftLinks.value = connectTerminalLink(draftLinks.value, pointId, sourceId)
+  selectedTerminalId.value = pointId; selectedId.value = sourceId; matchStart.value = null
+}
+function removeSelectedLink() {
+  const pointId = matchStart.value?.kind === 'terminal' ? matchStart.value.id
+    : matchStart.value?.kind === 'source' ? Object.keys(draftLinks.value).find(id => draftLinks.value[id] === matchStart.value?.id)
+    : selectedTerminalId.value || Object.keys(draftLinks.value).find(id => draftLinks.value[id] === selectedId.value)
+  if (!pointId || !draftLinks.value[pointId]) return
+  linkHistory.value.push({ ...draftLinks.value })
+  const next = { ...draftLinks.value }; delete next[pointId]; draftLinks.value = next; matchStart.value = null
+}
+async function saveMatching() {
+  if (!linkDirty.value || linkSaving.value) return
+  linkSaving.value = true
+  try {
+    const doc = await saveTerminalLinks(String(route.params.taskId), currentPage.value, linkRevision.value, draftLinks.value)
+    linkRevision.value = doc.revision; savedLinks.value = { ...draftLinks.value }
+    savedLinkLabels.value = Object.fromEntries(doc.records.filter(r => !r.orphaned && r.terminalPointId).map(r => [r.terminalPointId!, r.terminalNumber]))
+    matchingMode.value = false; matchStart.value = null
+    await resultPanel.value?.refreshBusinessDocument()
+    invalidateDatasetReview()
+    message.success('匹配关系已保存')
+  } catch { message.error('匹配关系保存失败或已被修改，请取消后重新进入并核对') }
+  finally { linkSaving.value = false }
+}
 
 function selectItem(id: string) {
   if (id.startsWith('terminal:')) { selectedTerminalId.value = id.slice('terminal:'.length); selectedId.value = ''; return }
@@ -344,6 +434,8 @@ function selectItem(id: string) {
 }
 
 function switchPage(no: number) {
+  if (matchingMode.value && linkDirty.value) { message.warning('请先保存或取消连线匹配'); return }
+  matchingMode.value = false
   if (resultPanel.value?.hasPendingEdits()) {
     message.warning('请先完成表格修改，或重试保存失败的单元格')
     return
@@ -456,6 +548,7 @@ async function saveTerminalEdits() {
         targetPage.terminalRevision = saved.revision
         invalidateDatasetReview()
         cancelTerminalEdit()
+        void refreshLinks()
         message.success('端子点修改已保存')
       })
   } catch (error) {
@@ -912,7 +1005,7 @@ async function handleExport(mode: ExportMode) {
     if (!await resultPanel.value?.flushPendingEdits()) { message.warning('请先完成保存'); return }
     const business = resultPanel.value?.exportItems()
     if (business) await exportTerminalBusiness(business, mode, page.value.no)
-    else await exportOcrResults(page.value.items.filter(item => !item.terminalPointId), mode, page.value.no)
+    else await exportOcrResults(page.value.items.filter(item => !item.terminalPointId || Boolean((item.corrected ?? item.text).trim())), mode, page.value.no)
     message.success(mode === 'simple' ? '精简结果已导出' : '完整结果已导出')
   } catch { message.error('导出失败，请重试') }
 }
@@ -928,14 +1021,14 @@ async function handleExport(mode: ExportMode) {
       <Pane :size="splitLayout.documentSizePercent" :min-size="splitLayout.documentMinPercent">
         <div class="document-workspace">
           <DocumentViewer :active-region-id="activeRegionId" @region-change="activeRegionId = $event" :allow-region-job="!isTerminalTask" v-if="displayPage" :pages="pages" :page="displayPage" :current-page="currentPage" :selected-id="selectedId" :zoom="zoom" :job-state="jobState" :progress="progress" :edit-mode="bboxEditMode" :can-undo="Boolean(bboxUndoStack.length) && !pendingGeometrySnapshot" :can-redo="Boolean(bboxRedoStack.length) && !pendingGeometrySnapshot" :has-unsaved-changes="bboxDirty" :has-pending-geometry="Boolean(pendingGeometrySnapshot)"
-            :terminal-edit-mode="terminalEditMode" :terminal-dirty="terminalDirty" :terminal-saving="terminalSaving" :selected-terminal-id="selectedTerminalId"
+            :terminal-edit-mode="terminalEditMode" :terminal-dirty="terminalDirty" :terminal-saving="terminalSaving" :selected-terminal-id="selectedTerminalId" :links="visibleLinks" :matching-mode="matchingMode" :show-links="showLinks" :match-start="matchStart" :link-saving="linkSaving" :link-dirty="linkDirty"
             @page-change="switchPage" @select="selectItem" @zoom-change="zoom = $event" @edit-toggle="toggleBboxEdit" @undo="undoBboxEdit" @redo="redoBboxEdit" @save="saveBboxEdits" @polygon-preview="previewDraftPolygon" @geometry-confirm="confirmGeometryEdit" @geometry-cancel="cancelGeometryEdit" @create-bbox="beginManualBbox" @create-region-job="openSourceRegionJob"
             @terminal-toggle="toggleTerminalEdit" @terminal-save="saveTerminalEdits" @terminal-cancel="cancelTerminalEdit" @terminal-delete="deleteTerminalPoint"
-            @terminal-create="createTerminalPoint" @terminal-select="selectedTerminalId = $event" @terminal-move="moveTerminalPoint" />
+            @terminal-create="createTerminalPoint" @terminal-select="selectedTerminalId = $event" @terminal-move="moveTerminalPoint" @link-toggle="toggleMatching" @link-save="saveMatching" @link-cancel="cancelMatching" @link-undo="() => { const previous = linkHistory.pop(); if (previous) draftLinks = previous }" @link-remove="removeSelectedLink" @link-terminal="linkClick('terminal', $event)" @link-source="linkClick('source', $event)" @show-links-toggle="showLinks = !showLinks" />
         </div>
       </Pane>
       <Pane :size="splitLayout.resultSizePercent" :min-size="splitLayout.resultMinPercent">
-        <OCRResultPanel :region-list-ids="regionListIds" v-if="resultPanelPage" ref="resultPanel" :selected-terminal-id="selectedTerminalId" :save-table="saveTableCell" :save-cable="saveCableCell" :editing-disabled="terminalEditMode" :page="resultPanelPage" :pages="pages" :selected-id="selectedId" :model-label="currentModel?.label || selectedModel" :low-confidence-threshold="settings.lowConfidenceThreshold" :show-confidence="settings.showConfidence" :can-undo-review="Boolean(lastReviewAction)" :dataset-reviewed="Boolean(datasetReviewed)" :dataset-review-saving="datasetReviewSaving" :dataset-review-disabled="jobState !== 'done' || taskLoading || reviewSaving || resultMutationSaving || bboxSaving || terminalSaving || terminalDirty || correctionOpen || manualTextOpen || Boolean(pendingGeometrySnapshot)" @complete-review="finishDatasetReview" @select="selectItem" @correct="openCorrection" @correct-source="openSourceCorrection" @select-terminal="id => { selectedTerminalId = id; selectedId = '' }" @business-changed="invalidateDatasetReview" @select-business="selection => { selectItem(selection.sourceId); selectedTerminalId = selection.pointId }" @comment="openComment" @export="handleExport" @review="reviewResults" @visible-change="visibleResultIds = $event" @undo="undoReviewAction" />
+        <OCRResultPanel :region-list-ids="regionListIds" v-if="resultPanelPage" ref="resultPanel" :selected-terminal-id="selectedTerminalId" :terminal-links="savedLinks" :terminal-link-labels="savedLinkLabels" :save-table="saveTableCell" :save-cable="saveCableCell" :editing-disabled="terminalEditMode || matchingMode" :page="resultPanelPage" :pages="pages" :selected-id="selectedId" :model-label="currentModel?.label || selectedModel" :low-confidence-threshold="settings.lowConfidenceThreshold" :show-confidence="settings.showConfidence" :can-undo-review="Boolean(lastReviewAction)" :dataset-reviewed="Boolean(datasetReviewed)" :dataset-review-saving="datasetReviewSaving" :dataset-review-disabled="jobState !== 'done' || taskLoading || reviewSaving || resultMutationSaving || bboxSaving || terminalSaving || terminalDirty || matchingMode || correctionOpen || manualTextOpen || Boolean(pendingGeometrySnapshot)" @complete-review="finishDatasetReview" @select="selectItem" @correct="openCorrection" @correct-source="openSourceCorrection" @select-terminal="id => { selectedTerminalId = id; selectedId = '' }" @business-changed="() => { invalidateDatasetReview(); void refreshLinks() }" @select-business="selection => { selectItem(selection.sourceId); selectedTerminalId = selection.pointId }" @comment="openComment" @export="handleExport" @review="reviewResults" @visible-change="visibleResultIds = $event" @undo="undoReviewAction" />
       </Pane>
     </Splitpanes>
     <div v-else class="workspace-empty">

@@ -26,7 +26,7 @@ def normalize_terminal_text(raw_text: str) -> str:
 
     normalized = unicodedata.normalize("NFKC", raw_text)
     compact = "".join(character for character in normalized if not character.isspace())
-    return compact.upper().translate(_DASH_TRANSLATION).translate(_SLASH_TRANSLATION)
+    return compact.translate(_DASH_TRANSLATION).translate(_SLASH_TRANSLATION)
 
 
 def _hamming_distance(left: str, right: str) -> int | None:
@@ -83,7 +83,7 @@ class TerminalCodeRules:
                     "open_numeric_regex", "open", "open_for_review", 0.55,
                 ),
                 RulePattern(
-                    "open_alphabetic", "existing", re.compile(r"^[A-Z]+$"),
+                    "open_alphabetic", "existing", re.compile(r"^[A-Za-z]+$"),
                     "open_alphabetic_regex", "open", "open_for_review", 0.55,
                 ),
             )
@@ -111,7 +111,7 @@ class TerminalCodeRules:
                 RulePattern(
                     rule_id=item["id"],
                     scheme=scheme,
-                    expression=re.compile(item["expression"]),
+                    expression=re.compile(item["expression"], re.IGNORECASE),
                     match_method=item["match_method"],
                     rule_level=item["level"],
                     rule_status=item["status"],
@@ -124,8 +124,8 @@ class TerminalCodeRules:
             library_statuses=statuses,
             library_schemes=schemes,
             patterns_by_scheme=patterns,
-            base_pattern=re.compile(config.base_code_pattern),
-            extended_pattern=re.compile(config.extended_code_pattern),
+            base_pattern=re.compile(config.base_code_pattern, re.IGNORECASE),
+            extended_pattern=re.compile(config.extended_code_pattern, re.IGNORECASE),
             numbering_scheme=config.numbering_scheme or "auto",
         )
 
@@ -181,19 +181,22 @@ class TerminalCodeRules:
         exact_hits: list[tuple[str, str, tuple[str, ...]]] = []
         for value, actions in variants:
             for scheme in active_schemes:
-                if value in self.library_codes and scheme in self.library_schemes[value]:
-                    exact_hits.append((value, scheme, actions))
+                case_hits = [code for code in self.library_codes if code.casefold() == value.casefold()]
+                hit = value if value in self.library_codes else case_hits[0] if len(case_hits) == 1 else None
+                if hit and scheme in self.library_schemes[hit]:
+                    exact_hits.append((hit, scheme, actions))
         if exact_hits:
             value, scheme, actions = min(
                 exact_hits,
                 key=lambda item: (len(item[2]), active_schemes.index(item[1]), item[0]),
             )
+            output_value = normalized.translate(_NOISE_PUNCTUATION) if actions else normalized
             return self._assessment(
                 raw_text,
                 normalized,
-                output_text=value,
-                recommended_code=value,
-                candidate_codes=tuple(sorted({hit[0] for hit in exact_hits})),
+                output_text=output_value,
+                recommended_code=output_value,
+                candidate_codes=(output_value,),
                 rule_status=self.library_statuses.get(value, "library"),
                 match_method="exact_library",
                 edit_count=0,
@@ -241,7 +244,7 @@ class TerminalCodeRules:
 
         correction_hits: list[tuple[str, str]] = []
         for scheme in active_schemes:
-            for candidate in self._correction_candidates(normalized, scheme):
+            for candidate in (() if any(c.islower() for c in normalized) else self._correction_candidates(normalized, scheme)):
                 correction_hits.append((candidate, scheme))
         unique_candidates = tuple(sorted({item[0] for item in correction_hits}))
         if len(unique_candidates) == 1:

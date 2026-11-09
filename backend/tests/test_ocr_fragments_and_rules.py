@@ -50,6 +50,22 @@ def test_text_band_merges_distant_fragments_from_different_rotation_variants(tmp
     assert result.detections[0].output_text == "X6"
 
 
+def test_full_image_never_merges_across_terminal_rack(tmp_path):
+    left = detection('17b', 40, 50, 80, 70)
+    right = detection('17b/TB55', 350, 50, 450, 70)
+    full = postprocess_detections([left, right], rules(tmp_path), DemoConfig(), full_image=True)
+    assert len(full.detections) == 2
+
+
+def test_lowercase_letters_are_preserved(tmp_path):
+    code_rules = rules(tmp_path)
+    assert normalize_terminal_text(' X16b / ') == 'X16b/'
+    assert contains_only_allowed_characters('X16b/')
+    assert code_rules.assess('x16').output_text == 'x16'
+    scheme_rules = TerminalCodeRules.from_config(replace(DemoConfig(), numbering_scheme='temp'))
+    assert scheme_rules.assess('t6-4').output_text == 't6-4'
+
+
 def test_text_band_follows_sloping_four_point_box(tmp_path):
     left = detection("X", 10, 10, 30, 30)
     left = replace(left, text_bbox_original=[[10, 10], [30, 20], [30, 40], [10, 30]])

@@ -169,6 +169,11 @@ class TerminalDocumentSave(BaseModel):
     source: TerminalSourceCorrection | None = None
     sync_record_id: str | None = None
 
+
+class TerminalLinksSave(BaseModel):
+    base_revision: int = Field(ge=0)
+    links: dict[str, str] = Field(max_length=5000)
+
 class TerminalSourceUpdate(BaseModel):
     result_id: str
     base_revision: int = Field(ge=0)
