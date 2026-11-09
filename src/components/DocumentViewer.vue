@@ -25,12 +25,13 @@ const props=defineProps<{
   terminalSaving?: boolean
   allowRegionJob?: boolean
   selectedTerminalId?: string
+  links?: Record<string, string>; matchingMode?: boolean; showLinks?: boolean; matchStart?: { kind: 'terminal' | 'source'; id: string } | null; linkSaving?: boolean; linkDirty?: boolean
 }>()
 
 const activeRegion=computed(()=>props.page.regionImages?.find(r=>r.id===props.activeRegionId && r.imageUrl && !r.failed))
 const canvasPage=computed(()=>activeRegion.value ? regionDisplayPage(props.page,activeRegion.value) : props.page)
 function chooseRegion(id:string) {
-  if(props.hasUnsavedChanges || props.hasPendingGeometry || props.terminalEditMode || props.terminalDirty || props.terminalSaving) {message.info('请先保存或取消当前编辑，再切换图片视图');return}
+  if(props.hasUnsavedChanges || props.hasPendingGeometry || props.terminalEditMode || props.terminalDirty || props.terminalSaving || props.matchingMode) {message.info('请先保存或取消当前编辑，再切换图片视图');return}
   emit('regionChange', id)
 }
 const selectedBoxCrossesRegion = computed(() => {
@@ -76,6 +77,14 @@ const emit = defineEmits<{
   terminalCreate: [point: { x: number; y: number }]
   terminalSelect: [id: string]
   terminalMove: [id: string, point: { x: number; y: number }]
+  linkToggle: []
+  linkSave: []
+  linkCancel: []
+  linkUndo: []
+  linkRemove: []
+  linkTerminal: [id: string]
+  linkSource: [id: string]
+  showLinksToggle: []
 }>()
 </script>
 
@@ -110,8 +119,10 @@ const emit = defineEmits<{
       </div>
       <div class="zoom-control">
         <button v-if="jobState === 'done' && allowRegionJob !== false" :disabled="editMode || terminalEditMode" @click="emit('createRegionJob')"><AimOutlined /> 区域识别</button>
-        <button :disabled="terminalEditMode" :class="{ active: editMode }" @click="toggleTextEdit"><EditOutlined /> {{ editMode ? '退出编辑' : '编辑框' }}</button>
-        <button v-if="page.terminalPoints && !activeRegion" :disabled="editMode || terminalSaving" :class="{ active: terminalEditMode }" @click="emit('terminalToggle')"><EditOutlined /> {{ terminalEditMode ? '退出端子编辑' : '编辑端子点' }}</button>
+        <button :disabled="terminalEditMode || matchingMode" :class="{ active: editMode }" @click="toggleTextEdit"><EditOutlined /> {{ editMode ? '退出编辑' : '编辑框' }}</button>
+        <button v-if="page.terminalPoints && !activeRegion" :disabled="editMode || terminalSaving || matchingMode" :class="{ active: terminalEditMode }" @click="emit('terminalToggle')"><EditOutlined /> {{ terminalEditMode ? '退出端子编辑' : '编辑端子点' }}</button>
+        <button v-if="page.terminalPoints && !activeRegion" :disabled="editMode || terminalEditMode || linkSaving" :class="{ active: matchingMode }" @click="emit('linkToggle')">{{ matchingMode ? '匹配中' : '连线匹配' }}</button>
+        <button v-if="page.terminalPoints && !activeRegion && !matchingMode" @click="emit('showLinksToggle')">{{ showLinks ? '隐藏匹配关系' : '显示匹配关系' }}</button>
         <div class="zoom-buttons">
         <button @click="emit('zoomChange', Math.max(.55, zoom - .1))"><ZoomOutOutlined /></button>
         <span>{{ Math.round(zoom * 100) }}%</span>
@@ -142,15 +153,23 @@ const emit = defineEmits<{
       <button type="button" :disabled="!terminalDirty || terminalSaving" @click="emit('terminalSave')"><SaveOutlined /> 保存端子点</button>
       <button type="button" :disabled="terminalSaving" @click="emit('terminalCancel')">取消编辑</button>
     </div>
+    <div v-if="matchingMode" class="edit-action-bar">
+      <span class="edit-action-title">连线匹配 · 点击端子点和线号框建立关系</span>
+      <span>{{ Object.keys(links || {}).length }} 对{{ linkDirty ? ' · 未保存' : '' }}</span>
+      <button @click="emit('linkUndo')">撤销上一条</button>
+      <button @click="emit('linkRemove')">解除选中关联</button>
+      <button :disabled="linkSaving || !linkDirty" @click="emit('linkSave')">保存并退出</button>
+      <button :disabled="linkSaving" @click="emit('linkCancel')">取消</button>
+    </div>
     <div v-if="page.terminalError" class="edit-action-bar"><span>端子检测不可用：{{ page.terminalError.message }}</span></div>
     <div class="canvas-viewport">
       <div class="page-canvas" :style="{ width: `${700 * zoom}px`, height: `${760 * zoom}px` }">
         <BBoxLayer :key="`${page.no}:${activeRegionId}`" :page="canvasPage" :selected-id="selectedId" :zoom="zoom" :edit-mode="editMode && !selectedBoxCrossesRegion"
-          :terminal-edit-mode="!activeRegion && terminalEditMode && !terminalSaving" :selected-terminal-id="selectedTerminalId"
+          :terminal-edit-mode="!activeRegion && terminalEditMode && !terminalSaving" :selected-terminal-id="selectedTerminalId" :links="!activeRegion && (matchingMode || showLinks) ? links : {}" :matching-mode="matchingMode" :match-start="matchStart"
           @select="emit('select', $event)" @polygon-preview="previewPolygon"
           @create="createBox" @terminal-create="!activeRegion && emit('terminalCreate', $event)"
           @terminal-select="emit('terminalSelect', $event)"
-          @terminal-move="(id, point) => !activeRegion && emit('terminalMove', id, point)" />
+          @terminal-move="(id, point) => !activeRegion && emit('terminalMove', id, point)" @link-terminal="emit('linkTerminal', $event)" @link-source="emit('linkSource', $event)" />
       </div>
     </div>
     <div class="legend"><span><i class="neutral"></i> 普通检测框</span><span><i class="selected"></i> 当前选中</span><span v-if="page.terminalPoints"><i style="background:#1677ff;border-radius:50%"></i> 端子对中心点</span><em>点击检测框可定位右侧结果</em></div>

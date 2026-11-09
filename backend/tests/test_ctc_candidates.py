@@ -52,6 +52,13 @@ def test_ctc_candidates_do_not_collapse_repeated_letters_without_blank() -> None
     assert candidates[0].text == "AA"
 
 
+def test_ctc_candidates_keep_lowercase_model_evidence() -> None:
+    characters = ["blank", "b", "B"]
+    probabilities = np.array([[0.05, 0.9, 0.05]])
+    candidates, _ = decode_ctc_candidates(probabilities, characters, ALLOWED_CHARACTERS, "b")
+    assert candidates[0].text == "b"
+
+
 def test_ctc_candidates_reject_dictionary_shape_mismatch() -> None:
     probabilities, characters = _prediction("1")
     try:

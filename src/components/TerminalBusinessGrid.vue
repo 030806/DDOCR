@@ -6,7 +6,6 @@ import type { OcrPage, OcrItem } from '../types/ocr'
 import { planTableSync } from '../businessSourceSync'
 import { syncTerminalDocument, type SourceUpdate, type SyncedSource } from '../api/terminalDocument'
 import { loadTerminalDocument, saveTerminalDocument, type TerminalDocument, type TerminalRecord, type SourceChange } from '../api/terminalDocument'
-import { businessSelection } from '../businessSelection'
 import { selectedBusinessSourceIds } from '../businessDeletion'
 import { transferBusinessRows, type BusinessClipboard } from '../businessClipboard'
 import { normalizeGridValue, type GridChange, type GridValues } from '../ocrGridEditing'
@@ -21,7 +20,7 @@ const doc = ref<TerminalDocument>({ revision: 0, records: [] })
 const busy = ref(false), loaded = ref(false), failed = ref(false)
 const selected = ref<string[]>([]), active = ref('')
 const activeSourceIds = computed(() => props.page.items.filter(item => item.reviewStatus !== 'deleted' && item.reviewStatus !== 'false_positive').map(item => item.id))
-const deletableRows = computed(() => doc.value.records.filter(row => row.sourceResultId && activeSourceIds.value.includes(row.sourceResultId)).map(row => row.id))
+const deletableRows = computed(() => tableRows.value.filter(row => row.cable?.sourceResultId && activeSourceIds.value.includes(row.cable.sourceResultId)).map(row => row.id))
 const sourceOpen = ref(false), sourceTarget = ref<OcrItem>(), sourceRecordId = ref('')
 const syncSource = ref(true)
 const pendingHistory = ref<boolean>()
@@ -31,24 +30,42 @@ type SyncHistory={before:SyncedSource[];after:SyncedSource[];expected:SyncedSour
 type Operation = { sync?:SyncHistory; before: TerminalRecord[]; after: TerminalRecord[]; sourceId?: string; beforeText?: string; afterText?: string; expectedSourceRevision?: number }
 const undo = ref<Operation[]>([]), redo = ref<Operation[]>([])
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value))
-watch(() => [props.selectedTerminalId, props.selectedSourceId, doc.value.records.length], () => {
-  active.value = props.selectedTerminalId ? `terminal:${props.selectedTerminalId}` : doc.value.records.find(r => r.sourceResultId === props.selectedSourceId)?.id || ''
-}, { immediate: true })
 const sourceRecord = computed(() => doc.value.records.find(r => r.id === sourceRecordId.value))
+const tableRows = computed(() => {
+  const records = doc.value.records.filter(r => !r.orphaned)
+  const terminals = records.filter(r => r.terminalPointId)
+  const linked = terminals.filter(r => r.sourceResultId || r.cable)
+  const unlinked = terminals.filter(r => !r.sourceResultId && !r.cable)
+  const sources = records.filter(r => !r.terminalPointId && r.sourceResultId)
+  return [
+    ...linked.map(r => ({ id: r.id, terminal: r, cable: r, matched: !!r.sourceResultId })),
+    ...Array.from({ length: Math.max(unlinked.length, sources.length) }, (_, index) => ({
+      id: unlinked[index]?.id || sources[index]!.id,
+      terminal: unlinked[index], cable: sources[index] || (unlinked[index]?.cable ? unlinked[index] : undefined), matched: false,
+    })),
+  ]
+})
+const viewRow = (id: string) => tableRows.value.find(r => r.id === id)
+watch(() => [props.selectedTerminalId, props.selectedSourceId, doc.value.revision], () => {
+  active.value = props.selectedTerminalId ? `terminal:${props.selectedTerminalId}` : tableRows.value.find(r => r.cable?.sourceResultId === props.selectedSourceId)?.id || ''
+}, { immediate: true })
 const values = (id: string): GridValues => {
-  const row = doc.value.records.find(r => r.id === id)!
-  return { terminalNumber: row.terminalNumber, cable: row.cable, tableNote: row.tableNote, manualConfirmed: row.manualConfirmed }
+  const row = viewRow(id)!
+  return { terminalNumber: row.terminal?.terminalNumber || '', cable: row.cable?.cable || '',
+    tableNote: row.cable?.tableNote || row.terminal?.tableNote || '',
+    manualConfirmed: row.cable?.manualConfirmed || false }
 }
-const rows = computed(() => doc.value.records.filter(r => !r.orphaned).map(r => ({ selectionId: r.id, terminalNumber: r.terminalNumber,
-  item: { id: r.id, text: r.cable, score: 1, bbox: [0, 0, 4, 4], comments: [] } as OcrItem,
-  hasTerminal: true, requiresTerminalReview: false })))
+const rows = computed(() => tableRows.value.map(r => ({ selectionId: r.id, terminalNumber: r.terminal?.terminalNumber || '',
+  item: { id: r.id, text: r.cable?.cable || '', score: 1, bbox: [0, 0, 4, 4], comments: [] } as OcrItem,
+  hasTerminal: !!r.terminal, requiresTerminalReview: !r.terminal,
+  relationLabel: r.matched ? '已匹配' : r.terminal === r.cable ? '人工填写' : '仅并排' })))
 function deleteSelectedSources() {
   if (busy.value || failed.value || props.editingDisabled) return
-  const ids = selectedBusinessSourceIds(doc.value.records, selected.value, activeSourceIds.value)
+  const ids = selectedBusinessSourceIds(doc.value.records, selected.value.map(id => viewRow(id)?.cable?.id || id), activeSourceIds.value)
   if (!ids.length) return
   Modal.confirm({
     title: '确认删除识别结果',
-    content: `将删除所选行关联的 ${ids.length} 条 OCR 结果，列表与表格同步移除这些线号。端子点保留，表格按剩余结果重新匹配。可用“撤销上一次结果操作”恢复。`,
+    content: `将删除所选行关联的 ${ids.length} 条 OCR 结果，列表与表格同步移除这些线号。端子点保留，其余结果继续独立展示。可用“撤销上一次结果操作”恢复。`,
     okText: '确认删除', okType: 'danger', cancelText: '取消',
     onOk: () => { emit('review', ids, 'deleted'); selected.value = [] },
   })
@@ -125,7 +142,9 @@ async function change(changes: GridChange[]) {
   const before = clone(doc.value.records), after = clone(before)
   try {
     for (const c of changes) {
-      const row = after.find(r => r.id === c.id)
+      const display = viewRow(c.id)
+      const targetId = c.field === 'terminalNumber' ? display?.terminal?.id : (display?.cable || display?.terminal)?.id
+      const row = after.find(r => r.id === targetId)
       if (!row) throw new Error('端子记录不存在')
       Object.assign(row, { [c.field]: normalizeGridValue(c.field, c.value), manual: true })
       if (c.field === 'cable' && c.clearSource) Object.assign(row, { sourceResultId: null, sourceRevision: 0, manualConfirmed: false })
@@ -151,27 +170,29 @@ async function change(changes: GridChange[]) {
   } catch (error) { doc.value=clone(doc.value);message.error(String(error)) }
 }
 function clipboardSource(id: string): BusinessClipboard['rows'][number] {
-  const r = doc.value.records.find(r => r.id === id)!
+  const r = viewRow(id)?.cable
+  if (!r) throw new Error('该行没有线号来源')
   return { id: r.id, cable: r.cable, sourceResultId: r.sourceResultId, sourceRevision: r.sourceRevision }
 }
 async function transfer(payload: BusinessClipboard, targets: string[]) {
   if (busy.value || props.editingDisabled || payload.scope !== `${job}:${pageNo}`) return
   try {
-    const before = clone(doc.value.records), after = transferBusinessRows(before, payload, targets)
+    const actualTargets = targets.map(id => (viewRow(id)?.terminal || viewRow(id)?.cable)?.id || id)
+    const before = clone(doc.value.records), after = transferBusinessRows(before, payload, actualTargets)
     if (await commit(after)) { undo.value.push({ before, after: clone(doc.value.records) }); redo.value = [] }
   } catch (error) { message.error(String(error)) }
 }
 function select(id: string) {
   active.value = id
-  const row = doc.value.records.find(r => r.id === id)
-  if (row) emit('selectBusiness', businessSelection(row))
+  const view = viewRow(id)
+  if (view) emit('selectBusiness', { pointId: view.terminal?.terminalPointId || '', sourceId: view.cable?.sourceResultId || '' })
 }
 function sourceReason(item?: OcrItem) {
-  const record = doc.value.records.find(r => r.id === item?.id)
+  const record = viewRow(item?.id || '')?.cable
   return sourceCorrectionUnavailable(props.page.items.find(i => i.id === record?.sourceResultId))
 }
 function correctSource(item: OcrItem) {
-  const row = doc.value.records.find(r => r.id === item.id)
+  const row = viewRow(item.id)?.cable
   const source = props.page.items.find(i => i.id === row?.sourceResultId)
   const reason = sourceCorrectionUnavailable(source)
   if (reason) { message.warning(reason); return }
@@ -237,13 +258,16 @@ async function retry() {
   }
 }
 function exportItems(): OcrItem[] {
-  return doc.value.records.filter(r => !r.orphaned).map(r => ({ id: r.id, text: r.cable, corrected: r.cable, score: 1, bbox: [0, 0, 4, 4], comments: [], terminalPointId: r.terminalPointId || undefined, terminalNumber: r.terminalNumber, tableNote: r.tableNote, manualConfirmed: r.manualConfirmed }))
+  return tableRows.value.map(r => ({ id: r.id, text: r.cable?.cable || '', corrected: r.cable?.cable || '', score: 1, bbox: [0, 0, 4, 4], comments: [],
+    terminalPointId: r.matched ? r.terminal?.terminalPointId || undefined : undefined,
+    businessAssociationStatus: r.matched ? 'matched' as const : r.terminal === r.cable ? 'manual' as const : 'unmatched' as const,
+    terminalNumber: r.terminal?.terminalNumber || '', tableNote: r.cable?.tableNote || '', manualConfirmed: r.cable?.manualConfirmed || false }))
 }
-defineExpose({ pending: () => busy.value || !loaded.value || failed.value, flush: async () => !busy.value && loaded.value && !failed.value, exportItems })
+defineExpose({ pending: () => busy.value || !loaded.value || failed.value, flush: async () => !busy.value && loaded.value && !failed.value, exportItems, reload: load })
 </script>
 <template>
   <div class="business-grid">
-    <p class="business-hint">端子最终结果：编辑端子号或线缆编号会同步关联 OCR 列表；无来源仅改表格，共用来源先确认。粘贴和移动来源保持原有规则。</p>
+    <p class="business-hint">已匹配记录排在前面；待匹配区域的端子号和线号仅分别按上下顺序并排展示，不表示关联。移动线号来源或使用图片连线可建立关联。</p>
     <div v-if="failed"><button v-if="failedInput" @click="retry">重试保留的整批输入</button><button @click="async () => { await load(); if (!failed) failedInput = undefined }">重新加载（放弃保留输入）</button><details v-if="failedInput"><summary>查看保留的输入</summary><pre>{{ failedInput.records }}</pre></details></div>
     <OcrResultGrid v-if="loaded" :rows="rows" :clipboard-scope="`${job}:${pageNo}`" :clipboard-source="clipboardSource" @transfer="transfer" :source-reason="sourceReason" :selected-id="active" :selected-ids="selected" :deletable-ids="deletableRows" :values="values" :statuses="{}" :revision="doc.revision" :can-undo="!!undo.length && !busy" :can-redo="!!redo.length && !busy" :editing-disabled="busy || failed || editingDisabled" @change="change" @select="select" @selection="selected = $event" @undo="history()" @redo="history(true)" @correct-source="correctSource" @delete-selected="deleteSelectedSources" />
     <p v-if="busy" role="status">正在加载或保存整批操作…</p>

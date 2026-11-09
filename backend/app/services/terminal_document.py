@@ -6,34 +6,30 @@ from fastapi import HTTPException
 from sqlalchemy import select, insert, update
 from sqlalchemy.orm import Session
 from app.models.schema import terminal_documents, pages, results, ocr_jobs, corrections, users
-from app.terminal_pair.match import terminal_pair_rows
 from app.terminal_pair.document_records import reconcile_matches
+
+
+def is_terminal_marker(item):
+    text = item.get("display_text")
+    if text is None:
+        text = item.get("text") or ""
+    return bool((item.get("attributes") or {}).get("terminal_point_id") and not str(text).strip())
 
 
 def seeded_records(page, items):
     points = sorted(page.get("terminal_points") or [], key=lambda p: (p["y"], p["x"], str(p["id"])))
-    pairs = terminal_pair_rows(points, items)
-    matched = [item for number, item in pairs if number]
     output = []
     for i, point in enumerate(points):
-        item = next((item for item in items if item.get("attributes", {}).get("terminal_point_id") == point["id"]), None)
-        if item is None and not any(item.get("attributes", {}).get("workflow_confirmed") for item in items):
-            item = matched[i] if i < len(matched) else None
-        legacy = bool(item and item.get("attributes", {}).get("terminal_point_id") and not item.get("attributes", {}).get("workflow_confirmed"))
         output.append({"id": "terminal:" + point["id"], "terminalPointId": point["id"],
-                       "sourceResultId": item["id"] if item and not legacy else None,
-                       "terminalNumber": ((item or {}).get("terminal_number") if (item or {}).get("table_revision") or (item or {}).get("manual_confirmed") else None) or point.get("terminal_number") or (item or {}).get("terminal_number") or str(i + 1),
-                       "cable": (item or {}).get("display_text", ""),
-                       "manualConfirmed": bool((item or {}).get("manual_confirmed")),
-                       "tableNote": (item or {}).get("table_note", ""),
-                       "manual": legacy or bool(item and item.get("table_revision")),
-                       "sourceRevision": (item or {}).get("revision", 0)})
-    represented = {item["id"] for item in matched if item}
+                       "sourceResultId": None,
+                       "terminalNumber": point.get("terminal_number") or str(i + 1),
+                       "cable": "", "manualConfirmed": False,
+                       "tableNote": "", "manual": False, "sourceRevision": 0})
     for item in items:
-        if item["id"] in represented or item.get("attributes", {}).get("terminal_point_id"):
+        if is_terminal_marker(item):
             continue
         output.append({"id": "ocr:" + item["id"], "terminalPointId": None,
-                       "sourceResultId": item["id"], "terminalNumber": item.get("terminal_number") or "",
+                       "sourceResultId": item["id"], "terminalNumber": "",
                        "cable": item.get("display_text", ""), "manualConfirmed": bool(item.get("manual_confirmed")),
                        "tableNote": item.get("table_note", ""),
                        "manual": bool(item.get("table_revision")),
@@ -41,10 +37,57 @@ def seeded_records(page, items):
     return output
 
 
+def _manual_link_records(records, items, links):
+    """Apply explicit one-to-one links, retaining independent OCR rows."""
+    by_source = {item["id"]: item for item in items}
+    old_unmatched = {r.get("sourceResultId"): r for r in records if r.get("terminalPointId") is None}
+    linked = set(links.values())
+    output = []
+    for record in records:
+        point_id = record.get("terminalPointId")
+        if point_id is None:
+            if not record.get("sourceResultId"):
+                output.append(record.copy())
+            continue
+        row = record.copy()
+        source_id = links.get(point_id)
+        if row.get("sourceResultId") != source_id:
+            source = by_source.get(source_id)
+            row.update(sourceResultId=source_id, sourceRevision=source.get("revision", 0) if source else 0,
+                       cable=source.get("display_text", "") if source else "", manualConfirmed=False)
+        row["manual"] = True
+        output.append(row)
+    from app.terminal_pair.document_records import _unmatched_record
+    for item in items:
+        if item["id"] not in linked and not is_terminal_marker(item):
+            output.append(old_unmatched.get(item["id"], _unmatched_record(item)).copy())
+    return output
+
+
 class TerminalDocumentService:
     def __init__(self, core):
         self.core = core
         self.engine = core.store.engine
+
+    def save_links(self, job_id, page_no, body, owner):
+        page = self.context(job_id, page_no, owner)
+        current = self.get(job_id, page_no, owner)
+        points = {str(point["id"]) for point in page.get("terminal_points") or []}
+        items = [self.core.public_result(self.core.result(rid)) for rid in page["result_ids"]
+                 if self.core.result(rid).get("review_status") not in {"deleted", "false_positive"}]
+        available = {item["id"] for item in items if not is_terminal_marker(item)}
+        links = body.links
+        if not set(links) <= points or not set(links.values()) <= available or len(set(links.values())) != len(links):
+            raise HTTPException(422, "Links must uniquely reference active points and OCR results on this page")
+        records = _manual_link_records(current["records"], items, links)
+        with Session(self.engine) as db, db.begin():
+            db.execute(update(ocr_jobs).where(ocr_jobs.c.id == job_id).values(result_version=ocr_jobs.c.result_version + 1))
+            updated = db.execute(update(terminal_documents).where(
+                terminal_documents.c.page_id == page["id"], terminal_documents.c.revision == body.base_revision
+            ).values(records=records, revision=body.base_revision + 1))
+            if not updated.rowcount:
+                raise HTTPException(409, "Terminal links changed; reload before retry")
+        return self.get(job_id, page_no, owner)
 
     def context(self, job_id, page_no, owner):
         job = self.core.job(job_id, owner)
@@ -142,7 +185,7 @@ class TerminalDocumentService:
             if body.source:
                 source = body.source
                 row = db.execute(select(results).where(results.c.id == source.result_id, results.c.page_id == page["id"])).mappings().first()
-                if not row or row["review_status"] in {"deleted", "false_positive"} or (row["attributes"] or {}).get("terminal_point_id"):
+                if not row or row["review_status"] in {"deleted", "false_positive"} or is_terminal_marker(row):
                     raise HTTPException(422, "Source is unavailable")
                 if row["current_revision"] != source.base_revision:
                     raise HTTPException(409, "OCR source changed; reload before retry")

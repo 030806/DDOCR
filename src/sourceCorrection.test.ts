@@ -6,7 +6,8 @@ describe('source correction', () => {
   it('allows an actual OCR source and blocks terminal-only records', () => {
     expect(sourceCorrectionUnavailable(item)).toBe('')
     expect(sourceCorrectionUnavailable()).not.toBe('')
-    expect(sourceCorrectionUnavailable({ ...item, terminalPointId: 'p1' })).not.toBe('')
+    expect(sourceCorrectionUnavailable({ ...item, terminalPointId: 'p1' })).toBe('')
+    expect(sourceCorrectionUnavailable({ ...item, text: '', terminalPointId: 'p1' })).not.toBe('')
     expect(sourceCorrectionUnavailable({ ...item, id: 'terminal:p1' })).not.toBe('')
   })
   it('requires deleted and false positive sources to be restored', () => {

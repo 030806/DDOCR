@@ -10,7 +10,7 @@ import { terminalNumberFillValues } from '../terminalNumberFill'
 import { createGridEditing, type GridChange } from '../ocrGridEditing'
 import { useRoute } from 'vue-router'
 import TerminalBusinessGrid from './TerminalBusinessGrid.vue'
-import { terminalTableRows } from '../terminalPairTable'
+import { independentTerminalTableRows } from '../terminalPairTable'
 
 const OcrResultGrid = defineAsyncComponent(() => import('./OcrResultGrid.vue'))
 
@@ -20,6 +20,8 @@ const props = defineProps<{
   regionListIds?: string[]
   selectedId: string
   selectedTerminalId?: string
+  terminalLinks?: Record<string, string>
+  terminalLinkLabels?: Record<string, string>
   modelLabel: string
   lowConfidenceThreshold: number
   showConfidence: boolean
@@ -73,8 +75,8 @@ function applyGridChanges(changes: GridChange[]) {
   try { editing.apply(changes) } catch (error) { message.error(String(error)) }
 }
 
-defineExpose({ hasPendingEdits, flushPendingEdits, syncCorrection, exportItems: () => viewMode.value === 'table' ? businessGrid.value?.exportItems() : undefined })
-const filteredItems = computed(() => filterOcrItems(props.page.items.filter(item => !item.terminalPointId), {
+defineExpose({ hasPendingEdits, flushPendingEdits, syncCorrection, refreshBusinessDocument: () => businessGrid.value?.reload(), exportItems: () => viewMode.value === 'table' ? businessGrid.value?.exportItems() : undefined })
+const filteredItems = computed(() => filterOcrItems(props.page.items.filter(item => !item.terminalPointId || Boolean((item.corrected ?? item.text).trim())), {
   search: search.value,
   minimumConfidence: minimumConfidencePercent.value / 100,
   lowOnly: lowOnly.value,
@@ -90,8 +92,15 @@ const listItems = computed(() => {
   const ids = new Set(props.regionListIds)
   return displayedItems.value.filter(item => ids.has(item.id))
 })
+const linkedTerminalLabel = (sourceId: string) => {
+  const pointId = Object.keys(props.terminalLinks || {}).find(id => props.terminalLinks?.[id] === sourceId)
+  if (!pointId) return ''
+  const points = [...(props.page.terminalPoints || [])].sort((a, b) => a.y - b.y || a.x - b.x)
+  const index = points.findIndex(point => point.id === pointId)
+  return props.terminalLinkLabels?.[pointId] || points[index]?.terminal_number || String(index + 1)
+}
 const hasTerminalResult = computed(() => Array.isArray(props.page.terminalPoints))
-const terminalRows = computed(() => terminalTableRows(props.page.terminalPoints || [], props.page.items))
+const terminalRows = computed(() => independentTerminalTableRows(props.page.terminalPoints || [], props.page.items))
 const visibleSelectionIds = computed(() => viewMode.value === 'table' && hasTerminalResult.value
   ? terminalRows.value.filter(row => !row.item || displayedItems.value.some(item => item.id === row.item!.id)).map(row => row.selectionId) : (viewMode.value === 'list' ? listItems.value : displayedItems.value).map(item => item.id))
 const selectedReviewIds = computed(() => props.page.items.filter(item => selectedIds.value.includes(item.id)).map(item => item.id))
@@ -209,7 +218,8 @@ watch(() => props.page, () => { selectedIds.value = []; coordinateSorted.value =
             <span v-if="item.needsRawTextReview && !item.corrected" class="raw-text-review-tag">待核对原始标记</span>
           </p>
           <div class="result-meta">
-            <span v-if="item.terminalNumber" class="result-terminal-number">端子号 {{ item.terminalNumber }}</span>
+            <span v-if="item.terminalNumber && !hasTerminalResult" class="result-terminal-number">端子号 {{ item.terminalNumber }}</span>
+            <span v-if="hasTerminalResult">{{ linkedTerminalLabel(item.id) ? `已关联 ${linkedTerminalLabel(item.id)} 号端子` : '待匹配' }}</span>
             <span v-if="item.editSource === 'manual'" class="manual-result-tag">人工新增</span>
             <span v-else-if="showConfidence" :class="item.score < lowConfidenceThreshold ? 'low-score' : ''"><i :style="{ background: scoreColor(item.score) }"></i>{{ (item.score * 100).toFixed(1) }}%</span>
             <span v-if="item.corrected" class="corrected-tag">已纠正</span>

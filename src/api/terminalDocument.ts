@@ -5,6 +5,9 @@ export type SourceChange = { result_id: string; base_revision: number; text: str
 export async function loadTerminalDocument(job: string, page: number): Promise<TerminalDocument> {
   return (await apiClient.get(`/ocr/jobs/${job}/pages/${page}/terminal-document`)).data.data
 }
+export async function saveTerminalLinks(job: string, page: number, revision: number, links: Record<string, string>): Promise<TerminalDocument> {
+  return (await apiClient.post(`/ocr/jobs/${job}/pages/${page}/terminal-links`, { base_revision: revision, links })).data.data
+}
 export async function saveTerminalDocument(job: string, page: number, document: TerminalDocument, source?: SourceChange, syncRecordId?: string) {
   return (await apiClient.put(`/ocr/jobs/${job}/pages/${page}/terminal-document`, { base_revision: document.revision, records: document.records, source, sync_record_id: syncRecordId })).data.data as TerminalDocument & { correction?: { corrected_text: string; revision: number } }
 }

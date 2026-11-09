@@ -102,7 +102,7 @@ def decode_ctc_candidates(
     raw_log_probability = ctc_text_log_probability(log_probs, characters, raw_text)
     indices = [
         index for index, char in enumerate(characters)
-        if index and len(char) == 1 and char.upper() in allowed_characters
+        if index and len(char) == 1 and char in allowed_characters
     ]
     beams: dict[str, tuple[float, float]] = {"": (0.0, _NEG_INF)}
     for row in log_probs:
@@ -133,10 +133,10 @@ def decode_ctc_candidates(
             )[:beam_width]
         )
 
-    # Different model classes (e.g. 'h' and 'H') can normalize to one code.
+    # Preserve the model's letter case in candidate evidence.
     ranked: dict[str, float] = {}
     for text in beams:
-        normalized = text.upper()
+        normalized = text
         if not normalized or any(char not in allowed_characters for char in normalized):
             continue
         score = ctc_text_log_probability(log_probs, characters, text)
@@ -199,7 +199,7 @@ class CandidateTextRecognizer:
                 sorted_index += 1
                 raw_text = str(results[original_index][0])
                 if raw_text and all(
-                    char.isspace() or char.upper() in self._allowed_characters
+                    char.isspace() or char in self._allowed_characters
                     for char in raw_text
                 ):
                     evidence[original_index] = {}

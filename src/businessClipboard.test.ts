@@ -10,10 +10,11 @@ it('moves an overlapping range upward with source identity, clearing only the tr
  expect(next.every(r=>!r.manualConfirmed)).toBe(true)
  expect(rows[1]!.cable).toBe('A')
 })
-it('copies provenance without changing the source row',()=>{
+it('copies the text without duplicating the source association',()=>{
  const rows=[row('7','',null),row('8','A','ocrA')]
  const next=transferBusinessRows(rows,{scope:'p',cut:false,rows:[rows[1]!]},['7'])
- expect(next[0]!.sourceResultId).toBe('ocrA')
+ expect(next[0]!.sourceResultId).toBeNull()
+ expect(next[0]!.cable).toBe('A')
  expect(next[1]).toEqual(rows[1])
 })
 it('rejects a changed cut source before applying any changes',()=>{

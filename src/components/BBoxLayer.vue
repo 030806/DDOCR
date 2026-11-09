@@ -7,6 +7,7 @@ import { bboxToCanvasRect, bboxToPolygon, canvasPointToSource, canvasRectToBbox,
 const props = defineProps<{
   page: OcrPage; selectedId: string; zoom: number; editMode?: boolean
   terminalEditMode?: boolean; selectedTerminalId?: string
+  links?: Record<string, string>; matchingMode?: boolean; matchStart?: { kind: 'terminal' | 'source'; id: string } | null
 }>()
 const emit = defineEmits<{
   select: [id: string]
@@ -15,6 +16,8 @@ const emit = defineEmits<{
   terminalCreate: [point: { x: number; y: number }]
   terminalSelect: [id: string]
   terminalMove: [id: string, point: { x: number; y: number }]
+  linkTerminal: [id: string]
+  linkSource: [id: string]
 }>()
 const stageConfig = computed(() => ({ width: 700 * props.zoom, height: 760 * props.zoom, scaleX: props.zoom, scaleY: props.zoom }))
 const sourceImage = shallowRef<HTMLImageElement>()
@@ -60,6 +63,14 @@ function terminalCanvasPoint(point: TerminalPoint) {
   const transform = editableTransform.value
   return { x: transform.x + point.x * transform.scale, y: transform.y + point.y * transform.scale }
 }
+const linkSegments = computed(() => Object.entries(props.links || {}).flatMap(([pointId, sourceId]) => {
+  const point = props.page.terminalPoints?.find(p => p.id === pointId)
+  const item = props.page.items.find(i => i.id === sourceId)
+  if (!point || !item) return []
+  const start = terminalCanvasPoint(point)
+  const target = rectConfig(item)
+  return [{ pointId, sourceId, points: [start.x, start.y, target.x + target.width / 2, target.y + target.height / 2] }]
+}))
 function finishTerminalDrag(point: TerminalPoint, event: any) {
   const transform = editableTransform.value
   const position = event.target.position()
@@ -166,10 +177,11 @@ function finishDrawing() {
       </template>
     </v-layer>
     <v-layer :config="page.isRegionView ? {clipX:imageTransform.x,clipY:imageTransform.y,clipWidth:imageTransform.width,clipHeight:imageTransform.height} : {}">
+      <v-line v-for="link in linkSegments" :key="`${link.pointId}:${link.sourceId}`" :config="{ points: link.points, stroke: matchingMode ? '#16a085' : '#45a99a', strokeWidth: matchingMode ? 2.5 : 1.5, opacity: matchingMode ? .9 : .55, listening: false }" />
       <template v-for="item in page.items" :key="item.id">
         <template v-if="!(editMode && selectedId === item.id)">
-          <v-line v-if="item.polygon" :config="{ points: canvasPolygon(item), closed: true, stroke: resultBoxColor(selectedId === item.id), strokeWidth: selectedId === item.id ? 3 : 1.5, fill: selectedId === item.id ? 'rgba(255,77,79,.10)' : 'rgba(182,191,188,.025)', hitStrokeWidth: 12 }" @click="emit('select', item.id)" @tap="emit('select', item.id)" />
-          <v-rect v-else :config="{ ...rectConfig(item), stroke: resultBoxColor(selectedId === item.id), strokeWidth: selectedId === item.id ? 3 : 1.5, fill: selectedId === item.id ? 'rgba(255,77,79,.10)' : 'rgba(182,191,188,.025)', cornerRadius: 2, hitStrokeWidth: 12 }" @click="emit('select', item.id)" @tap="emit('select', item.id)" />
+          <v-line v-if="item.polygon" :config="{ points: canvasPolygon(item), closed: true, stroke: resultBoxColor(selectedId === item.id), strokeWidth: selectedId === item.id ? 3 : 1.5, fill: selectedId === item.id ? 'rgba(255,77,79,.10)' : 'rgba(182,191,188,.025)', hitStrokeWidth: 12 }" @click="matchingMode ? emit('linkSource', item.id) : emit('select', item.id)" @tap="matchingMode ? emit('linkSource', item.id) : emit('select', item.id)" />
+          <v-rect v-else :config="{ ...rectConfig(item), stroke: resultBoxColor(selectedId === item.id), strokeWidth: selectedId === item.id ? 3 : 1.5, fill: selectedId === item.id ? 'rgba(255,77,79,.10)' : 'rgba(182,191,188,.025)', cornerRadius: 2, hitStrokeWidth: 12 }" @click="matchingMode ? emit('linkSource', item.id) : emit('select', item.id)" @tap="matchingMode ? emit('linkSource', item.id) : emit('select', item.id)" />
         </template>
         <template v-else>
           <v-line
@@ -187,8 +199,8 @@ function finishDrawing() {
           fill: selectedTerminalId === point.id ? '#fa8c16' : '#1677ff', stroke: '#ffffff', strokeWidth: 1.5,
           draggable: Boolean(terminalEditMode), hitStrokeWidth: 10 }"
         @mousedown="$event.cancelBubble = true"
-        @click="emit('terminalSelect', point.id)"
-        @tap="emit('terminalSelect', point.id)"
+        @click="matchingMode ? emit('linkTerminal', point.id) : emit('terminalSelect', point.id)"
+        @tap="matchingMode ? emit('linkTerminal', point.id) : emit('terminalSelect', point.id)"
         @dragend="finishTerminalDrag(point, $event)" />
     </v-layer>
   </v-stage>

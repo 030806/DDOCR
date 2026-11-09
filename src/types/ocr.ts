@@ -18,6 +18,7 @@ export type OcrItem = {
   id: string
   text: string
   terminalPointId?: string
+  businessAssociationStatus?: 'matched' | 'manual' | 'unmatched'
   rawText?: string
   sourceRegionId?:string
   score: number

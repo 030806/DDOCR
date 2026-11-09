@@ -1,6 +1,6 @@
 import type { OcrItem, TerminalPoint } from './types/ocr'
 import { exportableOcrItems } from './resultVisibility'
-import { terminalTableRows } from './terminalPairTable'
+import { independentTerminalTableRows } from './terminalPairTable'
 
 export type ExportMode = 'simple' | 'full'
 
@@ -65,12 +65,13 @@ export async function exportOcrResults(items: OcrItem[], mode: ExportMode, pageN
   const workbook = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(workbook, worksheet, mode === 'simple' ? '精简结果' : '完整结果')
   if (terminalPoints) {
-    const pairRows = terminalTableRows(terminalPoints, items).map(row => ({
+    const pairRows = independentTerminalTableRows(terminalPoints, items).map(row => ({
       端子号: row.terminalNumber,
       线号: row.item?.corrected ?? row.item?.text ?? '',
+      匹配状态: '仅并排，未确认',
     }))
-    const pairSheet = XLSX.utils.json_to_sheet(pairRows, { header: ['端子号', '线号'] })
-    pairSheet['!cols'] = [{ wch: 12 }, { wch: 40 }]
+    const pairSheet = XLSX.utils.json_to_sheet(pairRows, { header: ['端子号', '线号', '匹配状态'] })
+    pairSheet['!cols'] = [{ wch: 12 }, { wch: 40 }, { wch: 20 }]
     XLSX.utils.book_append_sheet(workbook, pairSheet, '端子对照表')
   }
   const modeLabel = mode === 'simple' ? '精简' : '完整'
@@ -79,15 +80,17 @@ export async function exportOcrResults(items: OcrItem[], mode: ExportMode, pageN
 
 
 export function createBusinessExportRows(items: OcrItem[]) {
-  return items.map(item => ({ 端子号: item.terminalNumber ?? '', 线号: item.corrected ?? item.text, 备注: item.tableNote ?? '', 人工确认: item.manualConfirmed ? '是' : '否' }))
+  return items.map(item => ({ 端子号: item.terminalNumber ?? '', 线号: item.corrected ?? item.text,
+    匹配状态: item.businessAssociationStatus === 'manual' ? '人工填写，无检测框' : item.terminalPointId ? '已匹配' : '仅并排，未确认',
+    备注: item.tableNote ?? '', 人工确认: item.manualConfirmed ? '是' : '否' }))
 }
 
 export async function exportTerminalBusiness(items: OcrItem[], mode: ExportMode, pageNo: number) {
   const XLSX = await import('xlsx')
-  const rows = createBusinessExportRows(items).map(row => mode === 'simple' ? { 端子号: row.端子号, 线号: row.线号 } : row)
+  const rows = createBusinessExportRows(items).map(row => mode === 'simple' ? { 端子号: row.端子号, 线号: row.线号, 匹配状态: row.匹配状态 } : row)
   const workbook = XLSX.utils.book_new()
   const sheet = XLSX.utils.json_to_sheet(rows)
-  sheet['!cols'] = [{ wch: 16 }, { wch: 40 }, { wch: 40 }, { wch: 12 }]
+  sheet['!cols'] = [{ wch: 16 }, { wch: 40 }, { wch: 20 }, { wch: 40 }, { wch: 12 }]
   XLSX.utils.book_append_sheet(workbook, sheet, '端子对照表')
   XLSX.writeFile(workbook, `端子最终结果_第${pageNo}页_${formatDate(new Date())}.xlsx`)
 }

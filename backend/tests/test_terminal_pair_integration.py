@@ -32,6 +32,31 @@ def configured_client(tmp_path: Path, detector: FakeTerminalDetector) -> TestCli
     ))
 
 
+def test_manual_links_are_saved_atomically_and_can_be_reassigned(tmp_path: Path) -> None:
+    client = configured_client(tmp_path, FakeTerminalDetector())
+    job_id, headers = workflow(client)
+    prefix = f"/api/v1/ocr/jobs/{job_id}/pages/1"
+    initial = client.get(prefix + "/terminal-document", headers=headers).json()["data"]
+    points = [row["terminalPointId"] for row in initial["records"] if row["terminalPointId"]]
+    source = next(row["sourceResultId"] for row in initial["records"] if row["sourceResultId"])
+    assert all(row["sourceResultId"] is None for row in initial["records"] if row["terminalPointId"])
+    linked = client.post(prefix + "/terminal-links", headers=headers,
+                         json={"base_revision": initial["revision"], "links": {points[0]: source}})
+    assert linked.status_code == 200, linked.text
+    first = linked.json()["data"]
+    assert next(row for row in first["records"] if row["terminalPointId"] == points[0])["sourceResultId"] == source
+    assert sum(row["sourceResultId"] == source for row in first["records"]) == 1
+    stale = client.post(prefix + "/terminal-links", headers=headers,
+                        json={"base_revision": initial["revision"], "links": {points[1]: source}})
+    assert stale.status_code == 409
+    moved = client.post(prefix + "/terminal-links", headers=headers,
+                        json={"base_revision": first["revision"], "links": {points[1]: source}})
+    assert moved.status_code == 200, moved.text
+    records = moved.json()["data"]["records"]
+    assert next(row for row in records if row["terminalPointId"] == points[0])["sourceResultId"] is None
+    assert next(row for row in records if row["terminalPointId"] == points[1])["sourceResultId"] == source
+
+
 @pytest.mark.parametrize("scheme", ["auto", "existing", "temp", "new"])
 def test_workflow_scheme_is_saved_on_ocr_job_and_inherited_by_rerun(tmp_path: Path, scheme: str) -> None:
     client = configured_client(tmp_path, FakeTerminalDetector())
