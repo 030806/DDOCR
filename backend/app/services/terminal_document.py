@@ -18,16 +18,19 @@ def is_terminal_marker(item):
 
 def seeded_records(page, items):
     points = sorted(page.get("terminal_points") or [], key=lambda p: (p["y"], p["x"], str(p["id"])))
+    sources = sorted((item for item in items if not is_terminal_marker(item)),
+                     key=lambda item: ((item["bbox"][1] + item["bbox"][3]) / 2,
+                                       (item["bbox"][0] + item["bbox"][2]) / 2, str(item["id"])))
     output = []
     for i, point in enumerate(points):
+        source = sources[i] if i < len(sources) else None
         output.append({"id": "terminal:" + point["id"], "terminalPointId": point["id"],
-                       "sourceResultId": None,
+                       "sourceResultId": source["id"] if source else None,
                        "terminalNumber": point.get("terminal_number") or str(i + 1),
-                       "cable": "", "manualConfirmed": False,
-                       "tableNote": "", "manual": False, "sourceRevision": 0})
-    for item in items:
-        if is_terminal_marker(item):
-            continue
+                       "cable": source.get("display_text", "") if source else "", "manualConfirmed": False,
+                       "tableNote": "", "manual": False, "initialLinked": True,
+                       "sourceRevision": source.get("revision", 0) if source else 0})
+    for item in sources[len(points):]:
         output.append({"id": "ocr:" + item["id"], "terminalPointId": None,
                        "sourceResultId": item["id"], "terminalNumber": "",
                        "cable": item.get("display_text", ""), "manualConfirmed": bool(item.get("manual_confirmed")),
@@ -56,6 +59,7 @@ def _manual_link_records(records, items, links):
             row.update(sourceResultId=source_id, sourceRevision=source.get("revision", 0) if source else 0,
                        cable=source.get("display_text", "") if source else "", manualConfirmed=False)
         row["manual"] = True
+        row["initialLinked"] = True
         output.append(row)
     from app.terminal_pair.document_records import _unmatched_record
     for item in items:
@@ -254,13 +258,11 @@ class TerminalDocumentService:
 def effective_records(db, page):
     """Read business values for export/merge without mutating OCR evidence."""
     doc = db.execute(select(terminal_documents).where(terminal_documents.c.page_id == page["id"])).mappings().first()
-    if not doc:
-        return None
     from app.models.store import StoredObject
     from app.terminal_pair.numbering import page_with_workflow_numbers
     snapshot = db.get(StoredObject, ("terminal_workflow_snapshot", page["job_id"]))
     page = page_with_workflow_numbers(page, snapshot.data if snapshot else None)
-    records = deepcopy(doc["records"])
+    records = deepcopy(doc["records"]) if doc else []
     active = {p["id"] for p in page.get("terminal_points") or []}
     source_rows = db.execute(select(results).where(results.c.id.in_(page["result_ids"]))).mappings().all()
     by_id = {row["id"]: row for row in source_rows}
@@ -274,6 +276,8 @@ def effective_records(db, page):
         item["display_text"] = row["current_correction"]["corrected_text"] if row["current_correction"] else row["text"]
         item["revision"] = row["current_revision"]
         items.append(item)
+    if not doc:
+        return seeded_records(page, items) if page.get('terminal_points') else None
     reconcile_matches(records, seeded_records(page, items), items, active)
     for r in records:
         rid = r.get("sourceResultId")

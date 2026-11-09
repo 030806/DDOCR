@@ -2,9 +2,11 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
+from sqlalchemy.orm import Session
 import pytest
 
 from app.main import create_app
+from app.services.terminal_document import effective_records
 from app.terminal_pair.client import TerminalPairClient
 from tests.ocr_fakes import FakeOcrAdapter, wait_for_job
 from tests.test_api import register_headers, upload_image, workflow
@@ -39,7 +41,7 @@ def test_manual_links_are_saved_atomically_and_can_be_reassigned(tmp_path: Path)
     initial = client.get(prefix + "/terminal-document", headers=headers).json()["data"]
     points = [row["terminalPointId"] for row in initial["records"] if row["terminalPointId"]]
     source = next(row["sourceResultId"] for row in initial["records"] if row["sourceResultId"])
-    assert all(row["sourceResultId"] is None for row in initial["records"] if row["terminalPointId"])
+    assert any(row["sourceResultId"] for row in initial["records"] if row["terminalPointId"])
     linked = client.post(prefix + "/terminal-links", headers=headers,
                          json={"base_revision": initial["revision"], "links": {points[0]: source}})
     assert linked.status_code == 200, linked.text
@@ -55,6 +57,43 @@ def test_manual_links_are_saved_atomically_and_can_be_reassigned(tmp_path: Path)
     records = moved.json()["data"]["records"]
     assert next(row for row in records if row["terminalPointId"] == points[0])["sourceResultId"] is None
     assert next(row for row in records if row["terminalPointId"] == points[1])["sourceResultId"] == source
+
+
+def test_workflow_endpoints_number_upwards(tmp_path: Path) -> None:
+    client = configured_client(tmp_path, FakeTerminalDetector())
+    headers = register_headers(client)
+    file_id = upload_image(client, headers)
+    flow = client.post('/api/v1/terminal-workflows', headers=headers, json={'file_id': file_id}).json()['data']
+
+    def action(name: str, **body: object) -> dict:
+        nonlocal flow
+        response = client.post(f"/api/v1/terminal-workflows/{flow['id']}/{name}", headers=headers,
+                               json={'base_revision': flow['revision'], **body})
+        assert response.status_code == 200, response.text
+        flow = response.json()['data']
+        return flow
+
+    action('configuration', changes={'regions': [{'id': 'roi', 'bbox': [100, 100, 700, 800]}]})
+    action('confirmations', step=1)
+    action('configuration', changes={'side': 'right'})
+    action('confirmations', step=2)
+    action('skeleton-detections')
+    action('confirmations', step=3)
+    top, bottom = sorted(flow['points'], key=lambda point: point['y'])
+    action('configuration', changes={'start_point_id': bottom['id'], 'end_point_id': top['id']})
+    action('confirmations', step=4)
+    action('configuration', changes={'ordering': {'start': 7, 'naming': 'auto'}})
+    action('confirmations', step=5)
+    job_id = action('recognitions')['id']
+    wait_for_job(client, job_id, headers)
+    page = client.get(f'/api/v1/ocr/jobs/{job_id}/pages', headers=headers).json()['data']['items'][0]
+    assert {point['id']: point['terminal_number'] for point in page['terminal_points']} == {
+        bottom['id']: '7', top['id']: '8'}
+    service = client.app.state.service
+    stored_page = service.page(service.jobs.get(job_id)['page_ids'][0])
+    with Session(service.store.engine) as db:
+        business = effective_records(db, stored_page)
+    assert any(row['terminalPointId'] and row['sourceResultId'] for row in business)
 
 
 @pytest.mark.parametrize("scheme", ["auto", "existing", "temp", "new"])

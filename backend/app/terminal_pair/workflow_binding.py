@@ -1,9 +1,8 @@
 
 def bind_results(items, snapshot):
     """Bind only to confirmed wire locations; preserve unmatched OCR text."""
-    ordered = sorted(snapshot['points'], key=lambda p:(p['y'],p['x'],p['id']))
-    ids = [p['id'] for p in ordered]
-    ids = ids[ids.index(snapshot['start_point_id']):]
+    from app.terminal_pair.numbering import ordered_point_ids
+    ids = ordered_point_ids(snapshot['points'], snapshot['start_point_id'], snapshot.get('end_point_id'))
     for item in items:
         x1,y1,x2,y2 = item['bbox']
         x,y = (x1+x2)/2,(y1+y2)/2
